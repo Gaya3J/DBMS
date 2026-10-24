@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { supabase } from "./supabaseClient"
+import type { User } from "@supabase/supabase-js"
 
 type Page = "home" | "login" | "signup" | "logout" | "dashboard" | "mentors" | "groups" | "resources" | "schedule" | "mentor-dashboard" | "mentor-requests" | "mentor-students" | "mentor-availability" | "mentor-resources" | "mentor-profile"
 type IconName = "arrow" | "bell" | "book" | "calendar" | "check" | "chevron" | "clock" | "close" | "download" | "filter" | "grid" | "group" | "heart" | "home" | "menu" | "message" | "more" | "play" | "plus" | "search" | "spark" | "star" | "target" | "video"
@@ -75,7 +77,7 @@ const mentors = [
   },
 ]
 
-const Icon = ({ name, size = 20 }: { name: IconName size?: number }) => {
+const Icon = ({ name, size = 20 }: { name: IconName; size?: number }) => {
   const paths: Record<IconName, React.ReactNode> = {
     arrow: (
       <>
@@ -275,13 +277,40 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
-  const signIn = () => {
+  const [loading, setLoading] = useState(false)
+
+  const signIn = async () => {
     if (!email || !password) {
       setError("Enter your email and password to continue.")
       return
     }
+    setLoading(true)
+    setError("")
+    const { error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+    setLoading(false)
+    if (authError) {
+      setError(authError.message)
+      return
+    }
     go("dashboard")
   }
+
+  const signInWithGoogle = async () => {
+    setError("")
+    const { error: authError } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    })
+    if (authError) {
+      setError(authError.message)
+    }
+  }
+
   return (
     <div className="auth-page">
       <main className="auth-form-panel">
@@ -295,7 +324,7 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
             <p>Enter your details to access your workspace.</p>
           </div>
           <div className="social-login">
-            <button onClick={() => go("dashboard")}>
+            <button onClick={signInWithGoogle}>
               <strong>G</strong> Continue with Google
             </button>
           </div>
@@ -317,7 +346,7 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
             </label>
             <label>
               <span>
-                Password <button>Forgot password?</button>
+                Password <button type="button">Forgot password?</button>
               </span>
               <div className="password-field">
                 <input
@@ -331,6 +360,7 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
                   onKeyDown={(event) => event.key === "Enter" && signIn()}
                 />
                 <button
+                  type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
@@ -342,8 +372,8 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
             <label className="remember-row">
               <input type="checkbox" /> Keep me signed in
             </label>
-            <Button className="full-button" onClick={signIn}>
-              Sign in <Icon name="arrow" size={17} />
+            <Button className="full-button" onClick={signIn} disabled={loading}>
+              {loading ? "Signing in..." : "Sign in"} <Icon name="arrow" size={17} />
             </Button>
           </div>
           <p className="auth-signup">
@@ -360,15 +390,41 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
   const [showPassword, setShowPassword] = useState(false)
   const [form, setForm] = useState({ name: "", email: "", password: "" })
   const [error, setError] = useState("")
-  const createAccount = () => {
-    if (!form.name || !form.email || form.password.length < 8) {
+  const [success, setSuccess] = useState("")
+  const [loading, setLoading] = useState(false)
+
+  const createAccount = async () => {
+    if (!form.name || !form.email || form.password.length < 6) {
       setError(
-        "Complete every field and use at least 8 characters for your password.",
+        "Complete every field and use at least 6 characters for your password.",
       )
       return
     }
-    go("dashboard")
+    setLoading(true)
+    setError("")
+    setSuccess("")
+    const { data, error: authError } = await supabase.auth.signUp({
+      email: form.email,
+      password: form.password,
+      options: {
+        data: {
+          full_name: form.name,
+        },
+      },
+    })
+    setLoading(false)
+    if (authError) {
+      setError(authError.message)
+      return
+    }
+
+    if (data?.session) {
+      go("dashboard")
+    } else {
+      setSuccess("Account created! If email confirmation is enabled on your Supabase project, check your inbox to verify your email.")
+    }
   }
+
   return (
     <div className="auth-page signup-page">
       <main className="auth-form-panel signup-form-panel">
@@ -417,12 +473,13 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
                     setForm({ ...form, password: event.target.value })
                     setError("")
                   }}
-                  placeholder="At least 8 characters"
+                  placeholder="At least 6 characters"
                   onKeyDown={(event) =>
                     event.key === "Enter" && createAccount()
                   }
                 />
                 <button
+                  type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
@@ -431,12 +488,13 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
               </div>
             </label>
             {error && <p className="auth-error">{error}</p>}
+            {success && <p className="auth-success" style={{ color: "green", fontSize: "0.9rem", margin: "8px 0" }}>{success}</p>}
             <label className="remember-row terms-row">
               <input type="checkbox" defaultChecked /> I agree to the Terms and
               Privacy Policy
             </label>
-            <Button className="full-button" onClick={createAccount}>
-              Create my account <Icon name="arrow" size={17} />
+            <Button className="full-button" onClick={createAccount} disabled={loading}>
+              {loading ? "Creating account..." : "Create my account"} <Icon name="arrow" size={17} />
             </Button>
           </div>
           <p className="auth-signup">
@@ -449,7 +507,13 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
   )
 }
 
-function LogoutPage({ go }: { go: (page: Page) => void }) {
+function LogoutPage({ go, user }: { go: (page: Page) => void; user?: User | null }) {
+  useEffect(() => {
+    supabase.auth.signOut()
+  }, [])
+
+  const displayName = user?.user_metadata?.full_name || user?.email?.split("@")[0] || "there"
+
   return (
     <div className="logout-page">
       <Logo onClick={() => go("home")} />
@@ -458,7 +522,7 @@ function LogoutPage({ go }: { go: (page: Page) => void }) {
           <Icon name="check" size={27} />
         </span>
         <span className="kicker">SIGNED OUT</span>
-        <h1>See you next time, Alex</h1>
+        <h1>See you next time, {displayName}</h1>
         <p>
           You’ve been safely signed out. Your learning progress and mentor
           workspace will be ready when you return.
@@ -690,7 +754,7 @@ function PublicHome({ go }: { go: (page: Page) => void }) {
   )
 }
 
-const navItems: { page: Page label: string icon: IconName }[] = [
+const navItems: { page: Page; label: string; icon: IconName }[] = [
   { page: "dashboard", label: "Overview", icon: "home" },
   { page: "mentors", label: "Find mentors", icon: "search" },
   { page: "schedule", label: "My schedule", icon: "calendar" },
@@ -698,7 +762,7 @@ const navItems: { page: Page label: string icon: IconName }[] = [
   { page: "resources", label: "Resources", icon: "book" },
 ]
 
-const mentorNavItems: { page: Page label: string icon: IconName }[] = [
+const mentorNavItems: { page: Page; label: string; icon: IconName }[] = [
   { page: "mentor-dashboard", label: "Mentor overview", icon: "grid" },
   { page: "mentor-requests", label: "Session requests", icon: "message" },
   { page: "mentor-students", label: "My students", icon: "group" },
@@ -2234,14 +2298,42 @@ function MentorProfile() {
 
 export default function App() {
   const [page, setPage] = useState<Page>("home")
+  const [user, setUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null)
+      setAuthLoading(false)
+    })
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+      setAuthLoading(false)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
   const go = (next: Page) => {
     setPage(next)
     window.scrollTo(0, 0)
   }
+
+  if (authLoading) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", fontFamily: "sans-serif" }}>
+        Loading...
+      </div>
+    )
+  }
+
   if (page === "home") return <PublicHome go={go} />
   if (page === "login") return <LoginPage go={go} />
   if (page === "signup") return <SignupPage go={go} />
-  if (page === "logout") return <LogoutPage go={go} />
+  if (page === "logout") return <LogoutPage go={go} user={user} />
   return (
     <AppShell page={page} go={go}>
       {page === "dashboard" && <Dashboard go={go} />}
