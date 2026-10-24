@@ -1,7 +1,26 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react";
 
-type Page = "home" | "login" | "signup" | "logout" | "dashboard" | "mentors" | "groups" | "resources" | "schedule" | "mentor-dashboard" | "mentor-requests" | "mentor-students" | "mentor-availability" | "mentor-resources" | "mentor-profile"
+type Page = "home" | "login" | "signup" | "logout" | "dashboard" | "mentors" | "groups" | "resources" | "schedule" | "mentor-dashboard" | "mentor-requests" | "mentor-students" | "mentor-availability" | "mentor-resources" | "mentor-profile" | "my-bookings"
 type IconName = "arrow" | "bell" | "book" | "calendar" | "check" | "chevron" | "clock" | "close" | "download" | "filter" | "grid" | "group" | "heart" | "home" | "menu" | "message" | "more" | "play" | "plus" | "search" | "spark" | "star" | "target" | "video"
+
+type ApiMentor = {
+  mentor_id: number;
+  student_id: number;
+  first_name: string;
+  last_name: string;
+  mentor_bio: string | null;
+  student_bio: string | null;
+  profile_photo_url: string | null;
+  average_rating: number | null
+total_sessions: number
+  services: {
+    service_id: number;
+    service_type: string;
+    description: string | null;
+    subject_id: number | null;
+    
+  }[];
+};
 
 const mentorImages = [
   "https://images.unsplash.com/photo-1662850886700-4ec19bd30d11?auto=format&fit=crop&w=480&q=84",
@@ -75,7 +94,7 @@ const mentors = [
   },
 ]
 
-const Icon = ({ name, size = 20 }: { name: IconName size?: number }) => {
+const Icon = ({ name, size = 20 }: { name: IconName; size?: number }) => {
   const paths: Record<IconName, React.ReactNode> = {
     arrow: (
       <>
@@ -477,10 +496,14 @@ function LogoutPage({ go }: { go: (page: Page) => void }) {
 function MentorCard({
   mentor,
   onBook,
+  onViewProfile,
   showSchool = true,
 }: {
-  mentor: typeof mentors[number]
+  mentor: typeof mentors[number] & {
+  profile_photo_url?: string | null
+}
   onBook?: () => void
+  onViewProfile?: () => void
   showSchool?: boolean
 }) {
   const [saved, setSaved] = useState(false)
@@ -488,11 +511,11 @@ function MentorCard({
     <article className="mentor-card">
       <div className="mentor-card-top">
         <div className="mentor-photo-wrap">
-          <img
-            className="mentor-photo"
-            src={mentor.image}
-            alt={`${mentor.name}, ${mentor.role} mentor`}
-          />
+         <img
+  className="mentor-photo"
+  src={mentor.profile_photo_url || mentor.image}
+  alt={`${mentor.name}, ${mentor.role} mentor`}
+/>
           <span
             className={`online-dot ${mentor.available ? "is-online" : ""}`}
           />
@@ -522,13 +545,23 @@ function MentorCard({
           ))}
         </div>
         <div className="mentor-footer">
-          <span>
-            <strong>{mentor.sessions}</strong> sessions
-          </span>
-          <button className="text-link" onClick={onBook}>
-            View profile <Icon name="arrow" size={15} />
-          </button>
-        </div>
+  <span>
+    <strong>{mentor.sessions}</strong> sessions
+  </span>
+
+  <div className="mentor-card-actions">
+    <button className="text-link" onClick={onViewProfile}>
+  View profile <Icon name="arrow" size={15} />
+</button>
+
+    <button
+      className="book-session-btn"
+      onClick={onBook}
+    >
+      Book Session
+    </button>
+  </div>
+</div>
       </div>
     </article>
   )
@@ -690,15 +723,16 @@ function PublicHome({ go }: { go: (page: Page) => void }) {
   )
 }
 
-const navItems: { page: Page label: string icon: IconName }[] = [
+const navItems: { page: Page; label: string; icon: IconName }[] = [
   { page: "dashboard", label: "Overview", icon: "home" },
   { page: "mentors", label: "Find mentors", icon: "search" },
+  { page: "my-bookings", label: "My Bookings", icon: "calendar" },
   { page: "schedule", label: "My schedule", icon: "calendar" },
   { page: "groups", label: "Study groups", icon: "group" },
   { page: "resources", label: "Resources", icon: "book" },
 ]
 
-const mentorNavItems: { page: Page label: string icon: IconName }[] = [
+const mentorNavItems: { page: Page; label: string; icon: IconName }[] = [
   { page: "mentor-dashboard", label: "Mentor overview", icon: "grid" },
   { page: "mentor-requests", label: "Session requests", icon: "message" },
   { page: "mentor-students", label: "My students", icon: "group" },
@@ -1110,21 +1144,128 @@ function Dashboard({ go }: { go: (page: Page) => void }) {
   )
 }
 
+
 function Mentors() {
   const [query, setQuery] = useState("")
   const [subject, setSubject] = useState("All subjects")
+  const [sort, setSort] = useState("recommended")
+  const [apiMentors, setApiMentors] = useState<ApiMentor[]>([])
+  const [subjects, setSubjects] = useState<
+  { subject_id: number; subject_name: string }[]
+>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [selectedMentor, setSelectedMentor] = useState<ApiMentor | null>(null)
+  const [bookingMentor, setBookingMentor] = useState<ApiMentor | null>(null)
+  const [bookingService, setBookingService] = useState("")
+const [bookingDate, setBookingDate] = useState("")
+const [bookingTime, setBookingTime] = useState("")
+const [bookingMessage, setBookingMessage] = useState("")
+const [showFilters, setShowFilters] = useState(false)
+const [minRating, setMinRating] = useState("0")
+const [minSessions, setMinSessions] = useState("0")
+useEffect(() => {
+  async function loadSubjects() {
+    try {
+      const response = await fetch("http://localhost:5000/api/subjects");
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error("Could not load subjects");
+      }
+
+      setSubjects(result.subjects);
+    } catch (err) {
+      console.error("Error loading subjects:", err);
+    }
+  }
+
+  loadSubjects();
+}, []);
+useEffect(() => {
+  async function loadMentors() {
+    try {
+      setLoading(true)
+      setError("")
+
+      const params = new URLSearchParams()
+
+      if (query.trim()) {
+        params.append("q", query.trim())
+      }
+
+      if (subject !== "All subjects") {
+        params.append("subject_id", subject)
+      }
+
+      params.append("sort", sort)
+
+      const response = await fetch(
+        `http://localhost:5000/api/mentors?${params.toString()}`
+      )
+
+      const result = await response.json()
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "Could not load mentors")
+      }
+
+      setApiMentors(result.mentors)
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while loading mentors",
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  loadMentors()
+}, [query, subject, sort])
+
   const filtered = useMemo(
     () =>
-      mentors.filter(
-        (m) =>
-          `${m.name} ${m.role} ${m.skills.join(" ")}`
-            .toLowerCase()
-            .includes(query.toLowerCase()) &&
-          (subject === "All subjects" || m.role.includes(subject)),
-      ),
-    [query, subject],
+      apiMentors.filter((mentor) => {
+        const searchableText = [
+          mentor.first_name,
+          mentor.last_name,
+          mentor.mentor_bio ?? "",
+          mentor.student_bio ?? "",
+          ...mentor.services.flatMap((service) => [
+            service.service_type,
+            service.description ?? "",
+          ]),
+        ]
+          .join(" ")
+          .toLowerCase()
+
+        const matchesQuery = searchableText.includes(query.toLowerCase())
+
+        const matchesSubject =
+  subject === "All subjects" ||
+  mentor.services.some(
+    (service) => String(service.subject_id) === subject,
   )
-  const [booking, setBooking] = useState<string | null>(null)
+
+        const matchesRating =
+  (mentor.average_rating ?? 0) >= Number(minRating)
+
+const matchesSessions =
+  mentor.total_sessions >= Number(minSessions)
+
+return (
+  matchesQuery &&
+  matchesSubject &&
+  matchesRating &&
+  matchesSessions
+)
+      }),
+      [apiMentors, query, subject, minRating, minSessions],
+  )
+
+  // TEMPORARY DEBUGGING
   return (
     <>
       <div className="page-title">
@@ -1134,6 +1275,7 @@ function Mentors() {
           <p>Discover students ready to share what they know.</p>
         </div>
       </div>
+
       <div className="filter-bar">
         <div className="large-search">
           <Icon name="search" />
@@ -1143,68 +1285,317 @@ function Mentors() {
             placeholder="Search by skill, course, or mentor..."
           />
         </div>
-        <select value={subject} onChange={(e) => setSubject(e.target.value)}>
-          <option>All subjects</option>
-          <option>Computer Science</option>
-          <option>Product Design</option>
-          <option>Data Science</option>
-          <option>Software Engineering</option>
-        </select>
-        <Button kind="secondary" icon="filter">
-          Filters
-        </Button>
+
+       <select
+  value={subject}
+  onChange={(e) => setSubject(e.target.value)}
+>
+  <option value="All subjects">All subjects</option>
+
+  {subjects.map((item) => (
+  <option key={item.subject_id} value={String(item.subject_id)}>
+    {item.subject_name}
+  </option>
+))}
+</select>
+
+        <Button
+  kind="secondary"
+  icon="filter"
+  onClick={() => setShowFilters(true)}
+>
+  Filters
+</Button>
       </div>
+
       <div className="results-heading">
         <p>
           <strong>{filtered.length} mentors</strong> match your interests
         </p>
-        <select>
-          <option>Recommended</option>
-          <option>Top rated</option>
-          <option>Most sessions</option>
-        </select>
+       <select
+  value={sort}
+  onChange={(e) => setSort(e.target.value)}
+>
+  <option value="recommended">Recommended</option>
+  <option value="top_rated">Top Rated</option>
+  <option value="most_sessions">Most Sessions</option>
+</select>
       </div>
+
+      {loading && <p>Loading mentors from Cognitrade...</p>}
+
+      {error && (
+        <div>
+          <p>Could not load mentors: {error}</p>
+          <Button kind="secondary" onClick={() => window.location.reload()}>
+            Try again
+          </Button>
+        </div>
+      )}
+
+      {!loading && !error && filtered.length === 0 && (
+        <p>No mentors match your search yet.</p>
+      )}
+
       <div className="mentor-grid app-mentor-grid">
-        {filtered.map((m) => (
-          <MentorCard
-            mentor={m}
-            key={m.name}
-            onBook={() => setBooking(m.name)}
-          />
-        ))}
+  {filtered.map((mentor, index) => {
+  const cardMentor = {
+    ...mentors[0],
+    name: `${mentor.first_name} ${mentor.last_name}`,
+    role: mentor.services[0]?.service_type ?? "Student Mentor",
+    school: "Cognitrade",
+    skills: mentor.services.map((service) => service.service_type),
+    image:
+      mentor.profile_photo_url ||
+      mentorImages[index % mentorImages.length],
+    profile_photo_url: mentor.profile_photo_url,
+    rating:
+  mentor.average_rating !== null
+    ? mentor.average_rating.toFixed(1)
+    : "New",
+    sessions: mentor.total_sessions,
+  }
+
+  return (
+   <MentorCard
+  key={mentor.mentor_id}
+  mentor={cardMentor}
+  onViewProfile={() => setSelectedMentor(mentor)}
+  onBook={() => setBookingMentor(mentor)}
+/>
+  )
+})}
       </div>
-      {booking && (
+
+      {selectedMentor && (
         <div className="modal-wrap">
           <button
             className="modal-backdrop"
-            onClick={() => setBooking(null)}
-            aria-label="Close modal"
+            onClick={() => setSelectedMentor(null)}
+            aria-label="Close profile"
           />
+
           <div className="modal">
-            <button className="modal-close" onClick={() => setBooking(null)}>
+            <button
+              className="modal-close"
+              onClick={() => setSelectedMentor(null)}
+              aria-label="Close profile"
+            >
               <Icon name="close" />
             </button>
+
             <span className="modal-icon">
               <Icon name="calendar" />
             </span>
-            <h2>Meet {booking}</h2>
+
+            <h2>
+              {selectedMentor.first_name} {selectedMentor.last_name}
+            </h2>
+
             <p>
-              Choose a session to get started. Your mentor will receive your
-              learning goals before you meet.
+              {selectedMentor.mentor_bio ||
+                selectedMentor.student_bio ||
+                "This mentor hasn't added a bio yet."}
             </p>
-            <div className="slot-grid">
-              {["Today · 4:30 PM", "Wed · 10:00 AM", "Thu · 2:00 PM"].map(
-                (x) => (
-                  <button key={x}>{x}</button>
-                ),
+
+            {selectedMentor.student_bio &&
+              selectedMentor.mentor_bio &&
+              selectedMentor.student_bio !== selectedMentor.mentor_bio && (
+                <p>{selectedMentor.student_bio}</p>
               )}
-            </div>
-            <Button className="full-button" onClick={() => setBooking(null)}>
-              Continue to booking
+
+            <h3>Services offered</h3>
+
+            {selectedMentor.services.length > 0 ? (
+              <div className="slot-grid">
+                {selectedMentor.services.map((service) => (
+                  <div key={service.service_id}>
+                    <strong>{service.service_type}</strong>
+                    <p>{service.description || "No description available."}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p>This mentor hasn't listed any services yet.</p>
+            )}
+
+            <Button
+              className="full-button"
+              onClick={() => {
+                setSelectedMentor(null)
+              }}
+            >
+              Close profile
             </Button>
           </div>
         </div>
       )}
+      {showFilters && (
+  <div
+  className="filter-overlay"
+  onClick={() => setShowFilters(false)}
+>
+    <div
+  className="filter-sidebar"
+  onClick={(e) => e.stopPropagation()}
+>
+      <div className="filter-header">
+        <h2>Filters</h2>
+        <button onClick={() => setShowFilters(false)}>
+          ✕
+        </button>
+      </div>
+
+      <div className="filter-group">
+        <h3>Minimum Rating</h3>
+
+        <select
+          value={minRating}
+          onChange={(e) => setMinRating(e.target.value)}
+        >
+          <option value="0">Any rating</option>
+          <option value="3">3.0+ stars</option>
+          <option value="4">4.0+ stars</option>
+          <option value="4.5">4.5+ stars</option>
+        </select>
+      </div>
+
+      <div className="filter-group">
+        <h3>Completed Sessions</h3>
+
+        <select
+          value={minSessions}
+          onChange={(e) => setMinSessions(e.target.value)}
+        >
+          <option value="0">Any number</option>
+          <option value="1">1+ sessions</option>
+          <option value="5">5+ sessions</option>
+          <option value="10">10+ sessions</option>
+        </select>
+      </div>
+
+      <div className="filter-actions">
+        <button
+          onClick={() => {
+            setMinRating("0")
+            setMinSessions("0")
+          }}
+        >
+          Clear All
+        </button>
+
+        <button onClick={() => setShowFilters(false)}>
+          Apply Filters
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+{bookingMentor && (
+  <div className="booking-overlay">
+    <div
+      className="booking-modal"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="booking-header">
+        <h2>Book a Session</h2>
+
+        <button onClick={() => setBookingMentor(null)}>
+          ✕
+        </button>
+      </div>
+
+      <p>
+        Booking a session with{" "}
+        <strong>
+          {bookingMentor.first_name} {bookingMentor.last_name}
+        </strong>
+      </p>
+
+      <div className="booking-field">
+        <label>Select Service</label>
+
+        <select
+          value={bookingService}
+          onChange={(e) => setBookingService(e.target.value)}
+        >
+          <option value="">Choose a service</option>
+
+          {bookingMentor.services.map((service) => (
+            <option
+              key={service.service_id}
+              value={String(service.service_id)}
+            >
+              {service.service_type}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="booking-field">
+        <label>Select Date</label>
+
+        <input
+          type="date"
+          value={bookingDate}
+          min={new Date().toISOString().split("T")[0]}
+          onChange={(e) => setBookingDate(e.target.value)}
+        />
+      </div>
+
+      <div className="booking-field">
+        <label>Select Time</label>
+
+        <input
+          type="time"
+          value={bookingTime}
+          onChange={(e) => setBookingTime(e.target.value)}
+        />
+      </div>
+
+      <div className="booking-field">
+        <label>Message to Mentor (Optional)</label>
+
+        <textarea
+          placeholder="Tell the mentor what you want to learn..."
+          value={bookingMessage}
+          onChange={(e) => setBookingMessage(e.target.value)}
+        />
+      </div>
+
+      <button
+  className="confirm-booking-btn"
+  onClick={() => {
+    if (!bookingService || !bookingDate || !bookingTime) {
+      alert("Please select a service, date and time.");
+      return;
+    }
+
+    const selectedDateTime = new Date(
+      `${bookingDate}T${bookingTime}`
+    );
+
+    if (selectedDateTime <= new Date()) {
+      alert("Please select a future date and time.");
+      return;
+    }
+
+    alert("Your booking details are valid!");
+
+    console.log("Booking details:", {
+      mentor: bookingMentor?.mentor_id,
+      service: bookingService,
+      date: bookingDate,
+      time: bookingTime,
+      message: bookingMessage,
+    });
+  }}
+>
+  Request Booking
+</button>
+    </div>
+  </div>
+)}
     </>
   )
 }
@@ -2138,6 +2529,29 @@ function MentorResources() {
 }
 
 function MentorProfile() {
+  const [profilePhoto, setProfilePhoto] = useState(mentorImages[5])
+
+  const handlePhotoChange = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0]
+
+    if (!file) return
+
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      alert("Please select a JPG, PNG, or WEBP image.")
+      return
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      alert("Image size must be less than 2 MB.")
+      return
+    }
+
+    const imageUrl = URL.createObjectURL(file)
+    setProfilePhoto(imageUrl)
+  }
+
   return (
     <>
       <div className="page-title">
@@ -2151,13 +2565,31 @@ function MentorProfile() {
       <div className="profile-layout">
         <section className="profile-form-card">
           <div className="profile-photo-row">
-            <Avatar src={mentorImages[5]} name="Alex Morgan" />
-            <div>
-              <strong>Profile photo</strong>
-              <p>A friendly, clear photo helps students feel comfortable.</p>
-            </div>
-            <Button kind="secondary">Change photo</Button>
-          </div>
+  <Avatar src={profilePhoto} name="Alex Morgan" />
+
+  <div>
+    <strong>Profile photo</strong>
+    <p>A friendly, clear photo helps students feel comfortable.</p>
+  </div>
+
+  <input
+    type="file"
+    id="profile-photo-input"
+    accept="image/jpeg,image/png,image/webp"
+    hidden
+    onChange={handlePhotoChange}
+  />
+
+  <Button
+    kind="secondary"
+    onClick={() =>
+      document.getElementById("profile-photo-input")?.click()
+    }
+  >
+    Change photo
+  </Button>
+</div>
+        
           <div className="profile-form-grid">
             <label>
               Display name
@@ -2209,7 +2641,7 @@ function MentorProfile() {
             mentor={{
               ...mentors[0],
               name: "Alex Morgan",
-              image: mentorImages[5],
+             image: profilePhoto,
               role: "Computer Science Mentor",
               school: "University of Michigan",
               sessions: 42,
@@ -2246,6 +2678,7 @@ export default function App() {
     <AppShell page={page} go={go}>
       {page === "dashboard" && <Dashboard go={go} />}
       {page === "mentors" && <Mentors />}
+      {page === "my-bookings" && <MyBookings />}
       {page === "groups" && <Groups />}
       {page === "resources" && <Resources />}
       {page === "schedule" && <Schedule />}
@@ -2258,3 +2691,181 @@ export default function App() {
     </AppShell>
   )
 }
+
+
+function MyBookings() {
+  
+
+  const sampleBookings = [
+    {
+      id: 1,
+      mentor: "Alex Morgan",
+      service: "Data Structures & Algorithms",
+      date: "28 October 2026",
+      time: "4:00 PM",
+      status: "pending",
+    },
+    {
+      id: 2,
+      mentor: "Sarah Johnson",
+      service: "Python Programming",
+      date: "30 October 2026",
+      time: "6:00 PM",
+      status: "confirmed",
+    },
+    {
+      id: 3,
+      mentor: "David Lee",
+      service: "Web Development",
+      date: "20 October 2026",
+      time: "3:00 PM",
+      status: "completed",
+    },
+  ]
+const [selectedBooking, setSelectedBooking] = useState<
+    (typeof sampleBookings)[number] | null
+  >(null)
+  return (
+    <div className="my-bookings-page">
+      <div className="bookings-heading">
+        <div>
+          <h1>My Bookings</h1>
+          <p>Track your mentoring sessions and booking requests.</p>
+        </div>
+      </div>
+
+      <div className="booking-stats">
+        <div className="booking-stat">
+          <span>Total Bookings</span>
+          <h2>{sampleBookings.length}</h2>
+        </div>
+        <div className="booking-stat">
+          <span>Pending</span>
+          <h2>{sampleBookings.filter(b => b.status === "pending").length}</h2>
+        </div>
+        <div className="booking-stat">
+          <span>Confirmed</span>
+          <h2>{sampleBookings.filter(b => b.status === "confirmed").length}</h2>
+        </div>
+        <div className="booking-stat">
+          <span>Completed</span>
+          <h2>{sampleBookings.filter(b => b.status === "completed").length}</h2>
+        </div>
+      </div>
+
+      <div className="booking-list">
+        <h2>Your Sessions</h2>
+
+        {sampleBookings.map((booking) => (
+          <div
+            className="booking-card"
+            key={booking.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => setSelectedBooking(booking)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                setSelectedBooking(booking)
+              }
+            }}
+          >
+            <div className="booking-card-info">
+              <div className="booking-avatar">
+                {booking.mentor.charAt(0)}
+              </div>
+
+              <div>
+                <h3>{booking.mentor}</h3>
+                <p>{booking.service}</p>
+                <span>{booking.date} · {booking.time}</span>
+              </div>
+            </div>
+
+            <div className="booking-card-right">
+              <span className={`booking-status ${booking.status}`}>
+                {booking.status}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {selectedBooking && (
+        <div
+          className="booking-overlay"
+          onClick={() => setSelectedBooking(null)}
+        >
+          <div
+            className="booking-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="booking-header">
+              <h2>Booking Details</h2>
+              <button onClick={() => setSelectedBooking(null)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="booking-avatar">
+              {selectedBooking.mentor.charAt(0)}
+            </div>
+
+            <h3>{selectedBooking.mentor}</h3>
+
+            <div className="booking-detail-item">
+              <strong>Service</strong>
+              <p>{selectedBooking.service}</p>
+            </div>
+
+            <div className="booking-detail-item">
+              <strong>Date</strong>
+              <p>{selectedBooking.date}</p>
+            </div>
+
+            <div className="booking-detail-item">
+              <strong>Time</strong>
+              <p>{selectedBooking.time}</p>
+            </div>
+
+            <div className="booking-detail-item">
+              <strong>Booking Status</strong>
+              <span className={`booking-status ${selectedBooking.status}`}>
+                {selectedBooking.status}
+              </span>
+            </div>
+
+            <div className="booking-modal-actions">
+  {selectedBooking.status === "pending" && (
+    <button
+      className="cancel-booking-btn"
+      onClick={() => {
+        const confirmed = window.confirm(
+          "Are you sure you want to cancel this booking?"
+        )
+
+        if (confirmed) {
+          alert("Booking cancelled successfully!")
+          setSelectedBooking(null)
+        }
+      }}
+    >
+      Cancel Booking
+    </button>
+  )}
+
+  <button
+    className="confirm-booking-btn"
+    onClick={() => setSelectedBooking(null)}
+  >
+    Close
+  </button>
+</div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
