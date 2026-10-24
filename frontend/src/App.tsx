@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { supabase } from "./supabaseClient";
+import type { User } from "@supabase/supabase-js";
 
-type Page = "home" | "login" | "signup" | "logout" | "dashboard" | "mentors" | "groups" | "resources" | "schedule" | "mentor-dashboard" | "mentor-requests" | "mentor-students" | "mentor-availability" | "mentor-resources" | "mentor-profile" | "my-bookings"
+type Page = "home" | "login" | "signup" | "logout" | "dashboard" | "mentors" | "groups" | "resources" | "schedule" | "mentor-dashboard" | "mentor-requests" | "mentor-students" | "mentor-availability" | "mentor-resources" | "mentor-profile" | "my-bookings" | "wishlist"
 type IconName = "arrow" | "bell" | "book" | "calendar" | "check" | "chevron" | "clock" | "close" | "download" | "filter" | "grid" | "group" | "heart" | "home" | "menu" | "message" | "more" | "play" | "plus" | "search" | "spark" | "star" | "target" | "video"
 
 type ApiMentor = {
@@ -274,15 +276,21 @@ function Button({
   icon,
   onClick,
   className = "",
+  disabled = false,
 }: {
   children: React.ReactNode
   kind?: "primary" | "secondary" | "ghost" | "light"
   icon?: IconName
   onClick?: () => void
   className?: string
+  disabled?: boolean
 }) {
   return (
-    <button className={`btn btn-${kind} ${className}`} onClick={onClick}>
+    <button
+      className={`btn btn-${kind} ${className}`}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {icon && <Icon name={icon} size={18} />}
       {children}
     </button>
@@ -294,13 +302,31 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
-  const signIn = () => {
-    if (!email || !password) {
-      setError("Enter your email and password to continue.")
-      return
-    }
-    go("dashboard")
+
+   const [loading, setLoading] = useState(false)
+  const signIn = async () => {
+  if (!email || !password) {
+    setError("Enter your email and password to continue.")
+    return
   }
+
+  setLoading(true)
+  setError("")
+
+  const { error: authError } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  })
+
+  setLoading(false)
+
+  if (authError) {
+    setError(authError.message)
+    return
+  }
+
+  go("dashboard")
+}
   return (
     <div className="auth-page">
       <main className="auth-form-panel">
@@ -314,9 +340,24 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
             <p>Enter your details to access your workspace.</p>
           </div>
           <div className="social-login">
-            <button onClick={() => go("dashboard")}>
-              <strong>G</strong> Continue with Google
-            </button>
+            <button
+  onClick={async () => {
+    setError("")
+
+    const { error: authError } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    })
+
+    if (authError) {
+      setError(authError.message)
+    }
+  }}
+>
+  <strong>G</strong> Continue with Google
+</button>
           </div>
           <div className="auth-divider">
             <span>or continue with email</span>
@@ -361,9 +402,10 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
             <label className="remember-row">
               <input type="checkbox" /> Keep me signed in
             </label>
-            <Button className="full-button" onClick={signIn}>
-              Sign in <Icon name="arrow" size={17} />
-            </Button>
+           <Button className="full-button" onClick={signIn} disabled={loading}>
+  {loading ? "Signing in..." : "Sign in"}
+  {!loading && <Icon name="arrow" size={17} />}
+</Button>
           </div>
           <p className="auth-signup">
             New to Cognitrade?{" "}
@@ -379,15 +421,45 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
   const [showPassword, setShowPassword] = useState(false)
   const [form, setForm] = useState({ name: "", email: "", password: "" })
   const [error, setError] = useState("")
-  const createAccount = () => {
-    if (!form.name || !form.email || form.password.length < 8) {
-      setError(
-        "Complete every field and use at least 8 characters for your password.",
-      )
-      return
-    }
-    go("dashboard")
+  const [success, setSuccess] = useState("")
+const [loading, setLoading] = useState(false)
+  const createAccount = async () => {
+  if (!form.name.trim() || !form.email.trim() || form.password.length < 8) {
+    setError(
+      "Complete every field and use at least 8 characters for your password.",
+    )
+    return
   }
+
+  setLoading(true)
+  setError("")
+  setSuccess("")
+
+  const { data, error: authError } = await supabase.auth.signUp({
+    email: form.email,
+    password: form.password,
+    options: {
+      data: {
+        full_name: form.name,
+      },
+    },
+  })
+
+  setLoading(false)
+
+  if (authError) {
+    setError(authError.message)
+    return
+  }
+
+  if (data.session) {
+    go("dashboard")
+  } else {
+    setSuccess(
+      "Account created! Please check your email to verify your account.",
+    )
+  }
+}
   return (
     <div className="auth-page signup-page">
       <main className="auth-form-panel signup-form-panel">
@@ -450,13 +522,15 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
               </div>
             </label>
             {error && <p className="auth-error">{error}</p>}
+            {success && <p>{success}</p>}
             <label className="remember-row terms-row">
               <input type="checkbox" defaultChecked /> I agree to the Terms and
               Privacy Policy
             </label>
-            <Button className="full-button" onClick={createAccount}>
-              Create my account <Icon name="arrow" size={17} />
-            </Button>
+            <Button className="full-button" onClick={createAccount} disabled={loading}>
+  {loading ? "Creating account..." : "Create my account"}
+  {!loading && <Icon name="arrow" size={17} />}
+</Button>
           </div>
           <p className="auth-signup">
             Already have an account?{" "}
@@ -468,7 +542,13 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
   )
 }
 
-function LogoutPage({ go }: { go: (page: Page) => void }) {
+function LogoutPage({
+  go,
+  user,
+}: {
+  go: (page: Page) => void
+  user: User | null
+}) {
   return (
     <div className="logout-page">
       <Logo onClick={() => go("home")} />
@@ -493,41 +573,48 @@ function LogoutPage({ go }: { go: (page: Page) => void }) {
   )
 }
 
+
+
 function MentorCard({
   mentor,
   onBook,
   onViewProfile,
+  onToggleWishlist,
+  isSaved = false,
   showSchool = true,
 }: {
   mentor: typeof mentors[number] & {
-  profile_photo_url?: string | null
-}
+    profile_photo_url?: string | null
+  }
   onBook?: () => void
   onViewProfile?: () => void
+  onToggleWishlist?: () => void
+  isSaved?: boolean
   showSchool?: boolean
 }) {
-  const [saved, setSaved] = useState(false)
   return (
     <article className="mentor-card">
       <div className="mentor-card-top">
         <div className="mentor-photo-wrap">
-         <img
-  className="mentor-photo"
-  src={mentor.profile_photo_url || mentor.image}
-  alt={`${mentor.name}, ${mentor.role} mentor`}
-/>
+          <img
+            className="mentor-photo"
+            src={mentor.profile_photo_url || mentor.image}
+            alt={`${mentor.name}, ${mentor.role} mentor`}
+          />
           <span
             className={`online-dot ${mentor.available ? "is-online" : ""}`}
           />
         </div>
+
         <button
-          className={`icon-button save ${saved ? "saved" : ""}`}
-          onClick={() => setSaved(!saved)}
-          aria-label={`Save ${mentor.name}`}
+          className={`icon-button save ${isSaved ? "saved" : ""}`}
+          onClick={onToggleWishlist}
+          aria-label={`${isSaved ? "Remove" : "Save"} ${mentor.name}`}
         >
           <Icon name="heart" size={19} />
         </button>
       </div>
+
       <div className="mentor-details">
         <div className="mentor-title-row">
           <h3>{mentor.name}</h3>
@@ -535,8 +622,10 @@ function MentorCard({
             <Icon name="star" size={14} /> {mentor.rating}
           </span>
         </div>
+
         <p className="role">{mentor.role}</p>
         {showSchool && <p className="school">{mentor.school}</p>}
+
         <div className="tag-row">
           {mentor.skills.map((skill) => (
             <span className="tag" key={skill}>
@@ -544,29 +633,26 @@ function MentorCard({
             </span>
           ))}
         </div>
+
         <div className="mentor-footer">
-  <span>
-    <strong>{mentor.sessions}</strong> sessions
-  </span>
+          <span>
+            <strong>{mentor.sessions}</strong> sessions
+          </span>
 
-  <div className="mentor-card-actions">
-    <button className="text-link" onClick={onViewProfile}>
-  View profile <Icon name="arrow" size={15} />
-</button>
+          <div className="mentor-card-actions">
+            <button className="text-link" onClick={onViewProfile}>
+              View profile <Icon name="arrow" size={15} />
+            </button>
 
-    <button
-      className="book-session-btn"
-      onClick={onBook}
-    >
-      Book Session
-    </button>
-  </div>
-</div>
+            <button className="book-session-btn" onClick={onBook}>
+              Book Session
+            </button>
+          </div>
+        </div>
       </div>
     </article>
   )
 }
-
 function PublicHome({ go }: { go: (page: Page) => void }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   return (
@@ -727,6 +813,7 @@ const navItems: { page: Page; label: string; icon: IconName }[] = [
   { page: "dashboard", label: "Overview", icon: "home" },
   { page: "mentors", label: "Find mentors", icon: "search" },
   { page: "my-bookings", label: "My Bookings", icon: "calendar" },
+  { page: "wishlist", label: "My Wishlist", icon: "heart" },
   { page: "schedule", label: "My schedule", icon: "calendar" },
   { page: "groups", label: "Study groups", icon: "group" },
   { page: "resources", label: "Resources", icon: "book" },
@@ -1150,11 +1237,13 @@ function Mentors() {
   const [subject, setSubject] = useState("All subjects")
   const [sort, setSort] = useState("recommended")
   const [apiMentors, setApiMentors] = useState<ApiMentor[]>([])
+  const [wishlistIds, setWishlistIds] = useState<number[]>([])
   const [subjects, setSubjects] = useState<
   { subject_id: number; subject_name: string }[]
 >([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+ 
   const [selectedMentor, setSelectedMentor] = useState<ApiMentor | null>(null)
   const [bookingMentor, setBookingMentor] = useState<ApiMentor | null>(null)
   const [bookingService, setBookingService] = useState("")
@@ -1182,6 +1271,87 @@ useEffect(() => {
 
   loadSubjects();
 }, []);
+async function loadWishlist() {
+  try {
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.getSession()
+
+    if (sessionError) throw sessionError
+
+    const token = sessionData.session?.access_token
+
+    if (!token) return
+
+    const response = await fetch("http://localhost:5000/api/wishlist", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.message || "Could not load wishlist")
+    }
+
+    setWishlistIds(
+      result.wishlist.map((mentor: ApiMentor) => mentor.mentor_id)
+    )
+  } catch (error) {
+    console.error("Wishlist loading error:", error)
+  }
+}
+async function toggleWishlist(mentorId: number) {
+  try {
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.getSession()
+
+    if (sessionError) throw sessionError
+
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      alert("Please log in to save mentors.")
+      return
+    }
+
+    const isSaved = wishlistIds.includes(mentorId)
+
+    const response = await fetch(
+      isSaved
+        ? `http://localhost:5000/api/wishlist/${mentorId}`
+        : "http://localhost:5000/api/wishlist",
+      {
+        method: isSaved ? "DELETE" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        ...(isSaved ? {} : {
+          body: JSON.stringify({ mentor_id: mentorId }),
+        }),
+      }
+    )
+
+    const result = await response.json()
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || "Could not update wishlist")
+    }
+
+    setWishlistIds((previous) =>
+      isSaved
+        ? previous.filter((id) => id !== mentorId)
+        : [...previous, mentorId]
+    )
+  } catch (error) {
+    console.error("Wishlist update error:", error)
+    alert("Could not update wishlist. Please try again.")
+  }
+}
+useEffect(() => {
+  loadWishlist()
+}, [])
 useEffect(() => {
   async function loadMentors() {
     try {
@@ -1357,11 +1527,13 @@ return (
   }
 
   return (
-   <MentorCard
+  <MentorCard
   key={mentor.mentor_id}
   mentor={cardMentor}
   onViewProfile={() => setSelectedMentor(mentor)}
   onBook={() => setBookingMentor(mentor)}
+  isSaved={wishlistIds.includes(mentor.mentor_id)}
+  onToggleWishlist={() => toggleWishlist(mentor.mentor_id)}
 />
   )
 })}
@@ -1565,31 +1737,74 @@ return (
 
       <button
   className="confirm-booking-btn"
-  onClick={() => {
-    if (!bookingService || !bookingDate || !bookingTime) {
-      alert("Please select a service, date and time.");
+  onClick={async () => {
+  if (!bookingService || !bookingDate || !bookingTime) {
+    alert("Please select a service, date and time.");
+    return;
+  }
+
+  const selectedDateTime = new Date(
+    `${bookingDate}T${bookingTime}`
+  );
+
+  if (selectedDateTime <= new Date()) {
+    alert("Please select a future date and time.");
+    return;
+  }
+
+  try {
+    // Get the Supabase login token
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.getSession();
+
+    if (sessionError) throw sessionError;
+
+    const token = sessionData.session?.access_token;
+
+    if (!token) {
+      alert("Please log in before requesting a booking.");
       return;
     }
 
-    const selectedDateTime = new Date(
-      `${bookingDate}T${bookingTime}`
-    );
-
-    if (selectedDateTime <= new Date()) {
-      alert("Please select a future date and time.");
-      return;
-    }
-
-    alert("Your booking details are valid!");
-
-    console.log("Booking details:", {
-      mentor: bookingMentor?.mentor_id,
-      service: bookingService,
-      date: bookingDate,
-      time: bookingTime,
-      message: bookingMessage,
+    // Send booking details to backend
+    const response = await fetch("http://localhost:5000/api/bookings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        mentor_id: bookingMentor.mentor_id,
+        service_id: Number(bookingService),
+        scheduled_time: selectedDateTime.toISOString(),
+        message: bookingMessage,
+      }),
     });
-  }}
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.message || "Booking request failed.");
+    }
+
+    alert("Booking request sent successfully!");
+
+    setBookingMentor(null);
+    setBookingService("");
+    setBookingDate("");
+    setBookingTime("");
+    setBookingMessage("");
+
+  } catch (error) {
+    console.error("Booking error:", error);
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Something went wrong."
+    );
+  }
+}}
 >
   Request Booking
 </button>
@@ -2666,19 +2881,90 @@ function MentorProfile() {
 
 export default function App() {
   const [page, setPage] = useState<Page>("home")
+  const [user, setUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+
+
+useEffect(() => {
+  let mounted = true;
+
+  // Listen for login, logout and session changes
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange((event, session) => {
+    if (!mounted) return;
+
+    console.log("Auth event:", event);
+    console.log("User:", session?.user?.email ?? "No user");
+
+    setUser(session?.user ?? null);
+
+    if (session) {
+      setPage("dashboard");
+    } else if (event === "SIGNED_OUT") {
+      setPage("home");
+    }
+
+    setAuthLoading(false);
+  });
+
+  // Restore an existing login session
+  supabase.auth.getSession().then(({ data, error }) => {
+    if (!mounted) return;
+
+    if (error) {
+      console.error("Session restoration error:", error);
+    }
+
+    const session = data.session;
+
+    console.log("Restored session:", session?.user?.email ?? "No session");
+
+    setUser(session?.user ?? null);
+
+    if (session) {
+      setPage("dashboard");
+    }
+
+    setAuthLoading(false);
+  });
+
+  return () => {
+    mounted = false;
+    subscription.unsubscribe();
+  };
+}, []);
+
+
   const go = (next: Page) => {
     setPage(next)
     window.scrollTo(0, 0)
   }
+    if (authLoading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          minHeight: "100vh",
+          fontFamily: "sans-serif",
+        }}
+      >
+        Loading...
+      </div>
+    )
+  }
   if (page === "home") return <PublicHome go={go} />
   if (page === "login") return <LoginPage go={go} />
   if (page === "signup") return <SignupPage go={go} />
-  if (page === "logout") return <LogoutPage go={go} />
+  if (page === "logout") return <LogoutPage go={go} user={user} />
   return (
     <AppShell page={page} go={go}>
       {page === "dashboard" && <Dashboard go={go} />}
       {page === "mentors" && <Mentors />}
       {page === "my-bookings" && <MyBookings />}
+      {page === "wishlist" && <MyWishlist />}
       {page === "groups" && <Groups />}
       {page === "resources" && <Resources />}
       {page === "schedule" && <Schedule />}
@@ -2692,39 +2978,503 @@ export default function App() {
   )
 }
 
+function MyWishlist() {
+  const [wishlist, setWishlist] = useState<ApiMentor[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [selectedMentor, setSelectedMentor] = useState<ApiMentor | null>(null)
+const [bookingMentor, setBookingMentor] = useState<ApiMentor | null>(null)
+
+const [bookingService, setBookingService] = useState("")
+const [bookingDate, setBookingDate] = useState("")
+const [bookingTime, setBookingTime] = useState("")
+const [bookingMessage, setBookingMessage] = useState("")
+
+  useEffect(() => {
+    const fetchWishlist = async () => {
+      try {
+        setLoading(true)
+        setError("")
+
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession()
+
+        if (sessionError) throw sessionError
+
+        const token = sessionData.session?.access_token
+
+        if (!token) {
+          setError("Please log in to view your wishlist.")
+          return
+        }
+
+        const response = await fetch(
+          "http://localhost:5000/api/wishlist",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        )
+
+        const result = await response.json()
+
+        if (!response.ok) {
+          throw new Error(result.message || "Could not load wishlist.")
+        }
+
+        setWishlist(result.wishlist || [])
+      } catch (err) {
+        console.error("Wishlist error:", err)
+        setError(
+          err instanceof Error ? err.message : "Something went wrong."
+        )
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchWishlist()
+  }, [])
+
+  const removeFromWishlist = async (mentorId: number) => {
+    try {
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession()
+
+      if (sessionError) throw sessionError
+
+      const token = sessionData.session?.access_token
+
+      if (!token) {
+        setError("Please log in to update your wishlist.")
+        return
+      }
+
+      const response = await fetch(
+        `http://localhost:5000/api/wishlist/${mentorId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      )
+
+      const result = await response.json()
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "Could not remove mentor.")
+      }
+
+      setWishlist((previous) =>
+        previous.filter((mentor) => mentor.mentor_id !== mentorId)
+      )
+    } catch (err) {
+      console.error("Remove wishlist error:", err)
+      setError(
+        err instanceof Error ? err.message : "Could not update wishlist."
+      )
+    }
+  }
+
+  return (
+    <div className="my-bookings-page">
+      <div className="bookings-heading">
+        <div>
+          <h1>My Wishlist</h1>
+          <p>Your favourite mentors, saved in one place.</p>
+        </div>
+      </div>
+
+      <div className="booking-list">
+        <h2>Saved Mentors ({wishlist.length})</h2>
+
+        {loading && <p>Loading your wishlist...</p>}
+
+        {!loading && error && (
+          <p className="booking-error">{error}</p>
+        )}
+
+        {!loading && !error && wishlist.length === 0 && (
+          <p>You haven't saved any mentors yet. Explore mentors and tap the heart to save one!</p>
+        )}
+
+        {!loading && !error && wishlist.length > 0 && (
+          <div className="mentor-grid">
+            {wishlist.map((mentor, index) => {
+              const cardMentor = {
+                ...mentors[0],
+                name: `${mentor.first_name} ${mentor.last_name}`,
+                role: mentor.services[0]?.service_type ?? "Student Mentor",
+                school: "Cognitrade",
+                skills: mentor.services.map(
+                  (service) => service.service_type
+                ),
+                image:
+                  mentor.profile_photo_url ||
+                  mentorImages[index % mentorImages.length],
+                profile_photo_url: mentor.profile_photo_url,
+                rating:
+                  mentor.average_rating !== null
+                    ? mentor.average_rating.toFixed(1)
+                    : "New",
+                sessions: mentor.total_sessions,
+              }
+
+              return (
+               <MentorCard
+  key={mentor.mentor_id}
+  mentor={cardMentor}
+  isSaved={true}
+  onToggleWishlist={() =>
+    removeFromWishlist(mentor.mentor_id)
+  }
+  onViewProfile={() => setSelectedMentor(mentor)}
+  onBook={() => {
+    setBookingMentor(mentor)
+    setBookingService("")
+    setBookingDate("")
+    setBookingTime("")
+    setBookingMessage("")
+  }}
+  showSchool={false}
+/>
+              )
+            })}
+          </div>
+        )}
+      </div>
+      
+      {selectedMentor && (
+        <div className="modal-wrap">
+          <button
+            className="modal-backdrop"
+            onClick={() => setSelectedMentor(null)}
+            aria-label="Close profile"
+          />
+
+          <div className="modal">
+            <button
+              className="modal-close"
+              onClick={() => setSelectedMentor(null)}
+              aria-label="Close profile"
+            >
+              <Icon name="close" />
+            </button>
+
+            <span className="modal-icon">
+              <Icon name="calendar" />
+            </span>
+
+            <h2>
+              {selectedMentor.first_name} {selectedMentor.last_name}
+            </h2>
+
+            <p>
+              {selectedMentor.mentor_bio ||
+                selectedMentor.student_bio ||
+                "This mentor hasn't added a bio yet."}
+            </p>
+
+            {selectedMentor.student_bio &&
+              selectedMentor.mentor_bio &&
+              selectedMentor.student_bio !== selectedMentor.mentor_bio && (
+                <p>{selectedMentor.student_bio}</p>
+              )}
+
+            <h3>Services offered</h3>
+
+            {selectedMentor.services.length > 0 ? (
+              <div className="slot-grid">
+                {selectedMentor.services.map((service) => (
+                  <div key={service.service_id}>
+                    <strong>{service.service_type}</strong>
+                    <p>
+                      {service.description || "No description available."}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p>This mentor hasn't listed any services yet.</p>
+            )}
+
+            <Button
+              className="full-button"
+              onClick={() => setSelectedMentor(null)}
+            >
+              Close profile
+            </Button>
+          </div>
+        </div>
+      )}
+      
+      {bookingMentor && (
+        <div className="booking-overlay">
+          <div
+            className="booking-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="booking-header">
+              <h2>Book a Session</h2>
+              <button onClick={() => setBookingMentor(null)}>
+                ✕
+              </button>
+            </div>
+
+            <p>
+              Booking a session with{" "}
+              <strong>
+                {bookingMentor.first_name} {bookingMentor.last_name}
+              </strong>
+            </p>
+
+            <div className="booking-field">
+              <label>Select Service</label>
+              <select
+                value={bookingService}
+                onChange={(e) => setBookingService(e.target.value)}
+              >
+                <option value="">Choose a service</option>
+                {bookingMentor.services.map((service) => (
+                  <option
+                    key={service.service_id}
+                    value={String(service.service_id)}
+                  >
+                    {service.service_type}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="booking-field">
+              <label>Select Date</label>
+              <input
+                type="date"
+                value={bookingDate}
+                min={new Date().toISOString().split("T")[0]}
+                onChange={(e) => setBookingDate(e.target.value)}
+              />
+            </div>
+
+            <div className="booking-field">
+              <label>Select Time</label>
+              <input
+                type="time"
+                value={bookingTime}
+                onChange={(e) => setBookingTime(e.target.value)}
+              />
+            </div>
+
+            <div className="booking-field">
+              <label>Message to Mentor (Optional)</label>
+              <textarea
+                placeholder="Tell the mentor what you want to learn..."
+                value={bookingMessage}
+                onChange={(e) => setBookingMessage(e.target.value)}
+              />
+            </div>
+
+            <button
+              className="confirm-booking-btn"
+              onClick={async () => {
+                if (!bookingService || !bookingDate || !bookingTime) {
+                  alert("Please select a service, date and time.")
+                  return
+                }
+
+                const selectedDateTime = new Date(
+                  `${bookingDate}T${bookingTime}`
+                )
+
+                if (selectedDateTime <= new Date()) {
+                  alert("Please select a future date and time.")
+                  return
+                }
+
+                try {
+                  const { data: sessionData, error: sessionError } =
+                    await supabase.auth.getSession()
+
+                  if (sessionError) throw sessionError
+
+                  const token = sessionData.session?.access_token
+
+                  if (!token) {
+                    alert("Please log in before requesting a booking.")
+                    return
+                  }
+
+                  const response = await fetch(
+                    "http://localhost:5000/api/bookings",
+                    {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${token}`,
+                      },
+                      body: JSON.stringify({
+                        mentor_id: bookingMentor.mentor_id,
+                        service_id: Number(bookingService),
+                        scheduled_time: selectedDateTime.toISOString(),
+                        message: bookingMessage,
+                      }),
+                    }
+                  )
+
+                  const result = await response.json()
+
+                  if (!response.ok) {
+                    throw new Error(
+                      result.message || "Booking request failed."
+                    )
+                  }
+
+                  alert("Booking request sent successfully!")
+
+                  setBookingMentor(null)
+                  setBookingService("")
+                  setBookingDate("")
+                  setBookingTime("")
+                  setBookingMessage("")
+                } catch (error) {
+                  console.error("Booking error:", error)
+                  alert(
+                    error instanceof Error
+                      ? error.message
+                      : "Something went wrong."
+                  )
+                }
+              }}
+            >
+              Request Booking
+            </button>
+          </div>
+        </div>
+      )}
+
+    </div>
+  )
+}
+
 
 function MyBookings() {
-  
+const [selectedBooking, setSelectedBooking] = useState<any | null>(null)
+ const [bookings, setBookings] = useState<any[]>([])
+const [loading, setLoading] = useState(true)
+const [error, setError] = useState("")
+useEffect(() => {
+  const fetchBookings = async () => {
+    try {
+      setLoading(true)
+      setError("")
 
-  const sampleBookings = [
-    {
-      id: 1,
-      mentor: "Alex Morgan",
-      service: "Data Structures & Algorithms",
-      date: "28 October 2026",
-      time: "4:00 PM",
-      status: "pending",
-    },
-    {
-      id: 2,
-      mentor: "Sarah Johnson",
-      service: "Python Programming",
-      date: "30 October 2026",
-      time: "6:00 PM",
-      status: "confirmed",
-    },
-    {
-      id: 3,
-      mentor: "David Lee",
-      service: "Web Development",
-      date: "20 October 2026",
-      time: "3:00 PM",
-      status: "completed",
-    },
-  ]
-const [selectedBooking, setSelectedBooking] = useState<
-    (typeof sampleBookings)[number] | null
-  >(null)
+      // Get the current Supabase login session
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession()
+
+      if (sessionError) {
+        throw sessionError
+      }
+
+      const token = sessionData.session?.access_token
+
+      if (!token) {
+        setError("Please log in to view your bookings.")
+        return
+      }
+
+      // Fetch bookings from the backend
+      const response = await fetch("http://localhost:5000/api/bookings", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || "Could not fetch bookings.")
+      }
+
+      // Convert backend data into the format used by your UI
+      const formattedBookings = (result.bookings || []).map((booking: any) => {
+        const scheduledDate = new Date(booking.scheduled_time)
+
+        return {
+          id: booking.session_id,
+          mentor: booking.mentor_name,
+          service: booking.service_name,
+          date: scheduledDate.toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          }),
+          time: scheduledDate.toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+          status: booking.session_status,
+        }
+      })
+
+      setBookings(formattedBookings)
+    } catch (err) {
+      console.error("Fetch bookings error:", err)
+      setError(
+        err instanceof Error ? err.message : "Something went wrong."
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  fetchBookings()
+}, [])
+ const cancelBooking = async (bookingId: number) => {
+  try {
+    setError("")
+
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      setError("Please log in to cancel this booking.")
+      return
+    }
+
+    const response = await fetch(
+      `http://localhost:5000/api/bookings/${bookingId}/cancel`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    )
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.message || "Could not cancel booking.")
+    }
+
+    setBookings((previousBookings) =>
+      previousBookings.map((booking) =>
+        booking.id === bookingId
+          ? { ...booking, status: "cancelled" }
+          : booking
+      )
+    )
+
+    setSelectedBooking(null)
+  } catch (err) {
+    setError(
+      err instanceof Error ? err.message : "Something went wrong."
+    )
+  }
+}
   return (
     <div className="my-bookings-page">
       <div className="bookings-heading">
@@ -2737,26 +3487,34 @@ const [selectedBooking, setSelectedBooking] = useState<
       <div className="booking-stats">
         <div className="booking-stat">
           <span>Total Bookings</span>
-          <h2>{sampleBookings.length}</h2>
+          <h2>{bookings.length}</h2>
         </div>
         <div className="booking-stat">
           <span>Pending</span>
-          <h2>{sampleBookings.filter(b => b.status === "pending").length}</h2>
+          <h2>{bookings.filter(b => b.status === "pending").length}</h2>
         </div>
         <div className="booking-stat">
           <span>Confirmed</span>
-          <h2>{sampleBookings.filter(b => b.status === "confirmed").length}</h2>
+          <h2>{bookings.filter(b => b.status === "confirmed").length}</h2>
         </div>
         <div className="booking-stat">
           <span>Completed</span>
-          <h2>{sampleBookings.filter(b => b.status === "completed").length}</h2>
+          <h2>{bookings.filter(b => b.status === "completed").length}</h2>
         </div>
       </div>
 
       <div className="booking-list">
         <h2>Your Sessions</h2>
+{loading && <p>Loading your bookings...</p>}
 
-        {sampleBookings.map((booking) => (
+{!loading && error && (
+  <p className="booking-error">{error}</p>
+)}
+
+{!loading && !error && bookings.length === 0 && (
+  <p>You haven't booked any sessions yet.</p>
+)}
+        {bookings.map((booking) => (
           <div
             className="booking-card"
             key={booking.id}
@@ -2845,9 +3603,8 @@ const [selectedBooking, setSelectedBooking] = useState<
         )
 
         if (confirmed) {
-          alert("Booking cancelled successfully!")
-          setSelectedBooking(null)
-        }
+  cancelBooking(selectedBooking.id)
+}
       }}
     >
       Cancel Booking

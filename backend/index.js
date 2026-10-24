@@ -420,17 +420,24 @@ app.get("/api/bookings", async (req, res) => {
     const { data: bookings, error: bookingError } =
       await userSupabase
         .from("session")
-        .select(`
-          session_id,
-          mentor_id,
-          student_id,
-          service_id,
-          scheduled_time,
-          session_status,
-          meeting_link,
-          rating_by_student,
-          review_by_student
-        `)
+       .select(`
+  session_id,
+  mentor_id,
+  student_id,
+  service_id,
+  scheduled_time,
+  session_status,
+  meeting_link,
+  rating_by_student,
+  review_by_student,
+  student_service:service (
+    service_type
+  ),
+  mentor:student!session_mentor_id_fkey (
+    first_name,
+    last_name
+  )
+`)
         .eq("student_id", student.student_id)
         .order("scheduled_time", { ascending: false });
 
@@ -442,11 +449,29 @@ app.get("/api/bookings", async (req, res) => {
         message: "Could not fetch bookings.",
       });
     }
+// Fetch mentor and service details for each booking
+const enrichedBookings = await Promise.all(
+  (bookings || []).map(async (booking) => {
+    const { data: mentorData } = await userSupabase
+      .from("mentor_public_profiles")
+      .select("first_name, last_name, service_type")
+      .eq("mentor_id", booking.mentor_id)
+      .eq("service_id", booking.service_id)
+      .maybeSingle();
 
+    return {
+      ...booking,
+      mentor_name: mentorData
+        ? `${mentorData.first_name} ${mentorData.last_name}`
+        : "Unknown Mentor",
+      service_name: mentorData?.service_type || "Unknown Service",
+    };
+  })
+);
     // 6. Send bookings
     return res.status(200).json({
       success: true,
-      bookings,
+      bookings: enrichedBookings,
     });
 
   } catch (error) {
@@ -458,6 +483,119 @@ app.get("/api/bookings", async (req, res) => {
     });
   }
 });
+
+app.patch("/api/bookings/:id/cancel", async (req, res) => {
+  try {
+    // 1. Verify authentication token
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        message: "Please log in to cancel a booking.",
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    // 2. Verify logged-in user
+    const { data: authData, error: authError } =
+      await supabase.auth.getUser(token);
+
+    if (authError || !authData.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired login session.",
+      });
+    }
+
+    // 3. Create authenticated Supabase client
+    const userSupabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_PUBLISHABLE_KEY,
+      {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      }
+    );
+
+    // 4. Find the student's record
+    const { data: student, error: studentError } =
+      await userSupabase
+        .from("student")
+        .select("student_id")
+        .eq("auth_user_id", authData.user.id)
+        .maybeSingle();
+
+    if (studentError || !student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found.",
+      });
+    }
+
+    // 5. Validate booking ID
+    const bookingId = Number(req.params.id);
+
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid booking ID.",
+      });
+    }
+
+    // 6. Update only this student's pending booking
+    const { data: booking, error: bookingError } =
+      await userSupabase
+        .from("session")
+        .update({ session_status: "cancelled" })
+        .eq("session_id", bookingId)
+        .eq("student_id", student.student_id)
+        .eq("session_status", "pending")
+        .select("session_id, session_status")
+        .maybeSingle();
+
+    if (bookingError) {
+      console.error("Cancel booking error:", bookingError);
+
+      return res.status(500).json({
+        success: false,
+        message: "Could not cancel booking.",
+      });
+    }
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Booking not found, does not belong to you, or is no longer pending.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Booking cancelled successfully!",
+      booking,
+    });
+
+  } catch (error) {
+    console.error("Cancel booking API error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong while cancelling the booking.",
+    });
+  }
+});
+
 app.post("/api/bookings", async (req, res) => {
   try {
     // 1. Verify authentication token
@@ -668,6 +806,323 @@ app.get("/api/mentors/:id", async (req, res) => {
     mentor,
   });
 });
+
+// GET: Fetch the logged-in student's wishlist
+app.get("/api/wishlist", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        message: "Please log in to view your wishlist.",
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    const { data: authData, error: authError } =
+      await supabase.auth.getUser(token);
+
+    if (authError || !authData.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired login session.",
+      });
+    }
+
+    const userSupabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_PUBLISHABLE_KEY,
+      {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      }
+    );
+
+    const { data: student, error: studentError } =
+      await userSupabase
+        .from("student")
+        .select("student_id")
+        .eq("auth_user_id", authData.user.id)
+        .maybeSingle();
+
+    if (studentError || !student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found.",
+      });
+    }
+
+    const { data: saved, error: wishlistError } =
+      await userSupabase
+        .from("wishlist")
+        .select("mentor_id")
+        .eq("student_id", student.student_id);
+
+    if (wishlistError) throw wishlistError;
+
+    const mentorIds = (saved || []).map(item => item.mentor_id);
+
+    if (mentorIds.length === 0) {
+      return res.json({
+        success: true,
+        mentors: [],
+      });
+    }
+
+    const { data: profiles, error: profileError } =
+      await supabase
+        .from("mentor_public_profiles")
+        .select("*")
+        .in("mentor_id", mentorIds);
+
+    if (profileError) throw profileError;
+
+    const mentorMap = new Map();
+
+    for (const row of profiles || []) {
+      if (!mentorMap.has(row.mentor_id)) {
+        mentorMap.set(row.mentor_id, {
+          mentor_id: row.mentor_id,
+          student_id: row.student_id,
+          first_name: row.first_name,
+          last_name: row.last_name,
+          mentor_bio: row.mentor_bio,
+          student_bio: row.student_bio,
+          profile_photo_url: row.profile_photo_url,
+          services: [],
+        });
+      }
+
+      if (row.service_id !== null) {
+        mentorMap.get(row.mentor_id).services.push({
+          service_id: row.service_id,
+          service_type: row.service_type,
+          description: row.service_description,
+          subject_id: row.subject_id,
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      mentors: Array.from(mentorMap.values()),
+    });
+
+  } catch (error) {
+    console.error("Fetch wishlist error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Could not fetch wishlist.",
+    });
+  }
+});
+
+
+// POST: Add a mentor to the wishlist
+app.post("/api/wishlist", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        message: "Please log in to save mentors.",
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    const { data: authData, error: authError } =
+      await supabase.auth.getUser(token);
+
+    if (authError || !authData.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired login session.",
+      });
+    }
+
+    const userSupabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_PUBLISHABLE_KEY,
+      {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      }
+    );
+
+    const { data: student, error: studentError } =
+      await userSupabase
+        .from("student")
+        .select("student_id")
+        .eq("auth_user_id", authData.user.id)
+        .maybeSingle();
+
+    if (studentError || !student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found.",
+      });
+    }
+
+    const mentorId = Number(req.body.mentor_id);
+
+    if (!Number.isInteger(mentorId) || mentorId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid mentor ID.",
+      });
+    }
+
+    const { error: insertError } = await userSupabase
+      .from("wishlist")
+      .insert({
+        student_id: student.student_id,
+        mentor_id: mentorId,
+      });
+
+    if (insertError) {
+      if (insertError.code === "23505") {
+        return res.status(409).json({
+          success: false,
+          message: "This mentor is already in your wishlist.",
+        });
+      }
+
+      throw insertError;
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Mentor added to wishlist!",
+    });
+
+  } catch (error) {
+    console.error("Add wishlist error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Could not save mentor.",
+    });
+  }
+});
+
+
+// DELETE: Remove a mentor from the wishlist
+app.delete("/api/wishlist/:mentorId", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        message: "Please log in to update your wishlist.",
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    const { data: authData, error: authError } =
+      await supabase.auth.getUser(token);
+
+    if (authError || !authData.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired login session.",
+      });
+    }
+
+    const userSupabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_PUBLISHABLE_KEY,
+      {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      }
+    );
+
+    const { data: student, error: studentError } =
+      await userSupabase
+        .from("student")
+        .select("student_id")
+        .eq("auth_user_id", authData.user.id)
+        .maybeSingle();
+
+    if (studentError || !student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found.",
+      });
+    }
+
+    const mentorId = Number(req.params.mentorId);
+
+    if (!Number.isInteger(mentorId) || mentorId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid mentor ID.",
+      });
+    }
+
+    const { data: deleted, error: deleteError } =
+      await userSupabase
+        .from("wishlist")
+        .delete()
+        .eq("student_id", student.student_id)
+        .eq("mentor_id", mentorId)
+        .select("mentor_id");
+
+    if (deleteError) throw deleteError;
+
+    if (!deleted || deleted.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Mentor was not found in your wishlist.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Mentor removed from wishlist!",
+    });
+
+  } catch (error) {
+    console.error("Remove wishlist error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Could not remove mentor.",
+    });
+  }
+});
+
 // Handle upload errors
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
