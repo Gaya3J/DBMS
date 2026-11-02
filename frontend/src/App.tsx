@@ -1,9 +1,28 @@
-import { useEffect, useMemo, useState } from "react"
-import { supabase } from "./supabaseClient"
-import type { User } from "@supabase/supabase-js"
+import { useEffect, useMemo, useState } from "react";
+import { supabase } from "./supabaseClient";
+import type { User } from "@supabase/supabase-js";
 
-type Page = "home" | "login" | "signup" | "logout" | "dashboard" | "mentors" | "groups" | "resources" | "schedule" | "mentor-dashboard" | "mentor-requests" | "mentor-students" | "mentor-availability" | "mentor-resources" | "mentor-profile"
+type Page = "home" | "login" | "signup" | "logout" | "dashboard" | "mentors" | "groups" | "resources" | "schedule" | "mentor-dashboard" | "mentor-requests" | "mentor-students" | "mentor-availability" | "mentor-resources" | "mentor-profile" | "my-bookings" | "wishlist"
 type IconName = "arrow" | "bell" | "book" | "calendar" | "check" | "chevron" | "clock" | "close" | "download" | "filter" | "grid" | "group" | "heart" | "home" | "menu" | "message" | "more" | "play" | "plus" | "search" | "spark" | "star" | "target" | "video"
+
+type ApiMentor = {
+  mentor_id: number;
+  student_id: number;
+  first_name: string;
+  last_name: string;
+  mentor_bio: string | null;
+  student_bio: string | null;
+  profile_photo_url: string | null;
+  average_rating: number | null
+total_sessions: number
+  services: {
+    service_id: number;
+    service_type: string;
+    description: string | null;
+    subject_id: number | null;
+    
+  }[];
+};
 
 const mentorImages = [
   "https://images.unsplash.com/photo-1662850886700-4ec19bd30d11?auto=format&fit=crop&w=480&q=84",
@@ -257,15 +276,21 @@ function Button({
   icon,
   onClick,
   className = "",
+  disabled = false,
 }: {
   children: React.ReactNode
   kind?: "primary" | "secondary" | "ghost" | "light"
   icon?: IconName
   onClick?: () => void
   className?: string
+  disabled?: boolean
 }) {
   return (
-    <button className={`btn btn-${kind} ${className}`} onClick={onClick}>
+    <button
+      className={`btn btn-${kind} ${className}`}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {icon && <Icon name={icon} size={18} />}
       {children}
     </button>
@@ -277,40 +302,31 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
-  const [loading, setLoading] = useState(false)
 
+   const [loading, setLoading] = useState(false)
   const signIn = async () => {
-    if (!email || !password) {
-      setError("Enter your email and password to continue.")
-      return
-    }
-    setLoading(true)
-    setError("")
-    const { error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-    setLoading(false)
-    if (authError) {
-      setError(authError.message)
-      return
-    }
-    go("dashboard")
+  if (!email || !password) {
+    setError("Enter your email and password to continue.")
+    return
   }
 
-  const signInWithGoogle = async () => {
-    setError("")
-    const { error: authError } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: window.location.origin,
-      },
-    })
-    if (authError) {
-      setError(authError.message)
-    }
+  setLoading(true)
+  setError("")
+
+  const { error: authError } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  })
+
+  setLoading(false)
+
+  if (authError) {
+    setError(authError.message)
+    return
   }
 
+  go("dashboard")
+}
   return (
     <div className="auth-page">
       <main className="auth-form-panel">
@@ -324,9 +340,24 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
             <p>Enter your details to access your workspace.</p>
           </div>
           <div className="social-login">
-            <button onClick={signInWithGoogle}>
-              <strong>G</strong> Continue with Google
-            </button>
+            <button
+  onClick={async () => {
+    setError("")
+
+    const { error: authError } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    })
+
+    if (authError) {
+      setError(authError.message)
+    }
+  }}
+>
+  <strong>G</strong> Continue with Google
+</button>
           </div>
           <div className="auth-divider">
             <span>or continue with email</span>
@@ -346,7 +377,7 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
             </label>
             <label>
               <span>
-                Password <button type="button">Forgot password?</button>
+                Password <button>Forgot password?</button>
               </span>
               <div className="password-field">
                 <input
@@ -360,7 +391,6 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
                   onKeyDown={(event) => event.key === "Enter" && signIn()}
                 />
                 <button
-                  type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
@@ -372,9 +402,10 @@ function LoginPage({ go }: { go: (page: Page) => void }) {
             <label className="remember-row">
               <input type="checkbox" /> Keep me signed in
             </label>
-            <Button className="full-button" onClick={signIn} disabled={loading}>
-              {loading ? "Signing in..." : "Sign in"} <Icon name="arrow" size={17} />
-            </Button>
+           <Button className="full-button" onClick={signIn} disabled={loading}>
+  {loading ? "Signing in..." : "Sign in"}
+  {!loading && <Icon name="arrow" size={17} />}
+</Button>
           </div>
           <p className="auth-signup">
             New to Cognitrade?{" "}
@@ -391,40 +422,44 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
   const [form, setForm] = useState({ name: "", email: "", password: "" })
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
-  const [loading, setLoading] = useState(false)
-
+const [loading, setLoading] = useState(false)
   const createAccount = async () => {
-    if (!form.name || !form.email || form.password.length < 6) {
-      setError(
-        "Complete every field and use at least 6 characters for your password.",
-      )
-      return
-    }
-    setLoading(true)
-    setError("")
-    setSuccess("")
-    const { data, error: authError } = await supabase.auth.signUp({
-      email: form.email,
-      password: form.password,
-      options: {
-        data: {
-          full_name: form.name,
-        },
-      },
-    })
-    setLoading(false)
-    if (authError) {
-      setError(authError.message)
-      return
-    }
-
-    if (data?.session) {
-      go("dashboard")
-    } else {
-      setSuccess("Account created! If email confirmation is enabled on your Supabase project, check your inbox to verify your email.")
-    }
+  if (!form.name.trim() || !form.email.trim() || form.password.length < 8) {
+    setError(
+      "Complete every field and use at least 8 characters for your password.",
+    )
+    return
   }
 
+  setLoading(true)
+  setError("")
+  setSuccess("")
+
+  const { data, error: authError } = await supabase.auth.signUp({
+    email: form.email,
+    password: form.password,
+    options: {
+      data: {
+        full_name: form.name,
+      },
+    },
+  })
+
+  setLoading(false)
+
+  if (authError) {
+    setError(authError.message)
+    return
+  }
+
+  if (data.session) {
+    go("dashboard")
+  } else {
+    setSuccess(
+      "Account created! Please check your email to verify your account.",
+    )
+  }
+}
   return (
     <div className="auth-page signup-page">
       <main className="auth-form-panel signup-form-panel">
@@ -448,7 +483,7 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
                   setForm({ ...form, name: event.target.value })
                   setError("")
                 }}
-                placeholder="Alex Morgan"
+                placeholder="Your name"
               />
             </label>
             <label>
@@ -473,13 +508,12 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
                     setForm({ ...form, password: event.target.value })
                     setError("")
                   }}
-                  placeholder="At least 6 characters"
+                  placeholder="At least 8 characters"
                   onKeyDown={(event) =>
                     event.key === "Enter" && createAccount()
                   }
                 />
                 <button
-                  type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
@@ -488,14 +522,15 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
               </div>
             </label>
             {error && <p className="auth-error">{error}</p>}
-            {success && <p className="auth-success" style={{ color: "green", fontSize: "0.9rem", margin: "8px 0" }}>{success}</p>}
+            {success && <p>{success}</p>}
             <label className="remember-row terms-row">
               <input type="checkbox" defaultChecked /> I agree to the Terms and
               Privacy Policy
             </label>
             <Button className="full-button" onClick={createAccount} disabled={loading}>
-              {loading ? "Creating account..." : "Create my account"} <Icon name="arrow" size={17} />
-            </Button>
+  {loading ? "Creating account..." : "Create my account"}
+  {!loading && <Icon name="arrow" size={17} />}
+</Button>
           </div>
           <p className="auth-signup">
             Already have an account?{" "}
@@ -507,12 +542,19 @@ function SignupPage({ go }: { go: (page: Page) => void }) {
   )
 }
 
-function LogoutPage({ go, user }: { go: (page: Page) => void; user?: User | null }) {
+function LogoutPage({
+  go,
+  user,
+}: {
+  go: (page: Page) => void
+  user: User | null
+}) {
   useEffect(() => {
     supabase.auth.signOut()
   }, [])
 
-  const displayName = user?.user_metadata?.full_name || user?.email?.split("@")[0] || "there"
+  const displayName =
+    user?.user_metadata?.full_name || user?.email?.split("@")[0] || "there"
 
   return (
     <div className="logout-page">
@@ -538,37 +580,48 @@ function LogoutPage({ go, user }: { go: (page: Page) => void; user?: User | null
   )
 }
 
+
+
 function MentorCard({
   mentor,
   onBook,
+  onViewProfile,
+  onToggleWishlist,
+  isSaved = false,
   showSchool = true,
 }: {
-  mentor: typeof mentors[number]
+  mentor: typeof mentors[number] & {
+    profile_photo_url?: string | null
+  }
   onBook?: () => void
+  onViewProfile?: () => void
+  onToggleWishlist?: () => void
+  isSaved?: boolean
   showSchool?: boolean
 }) {
-  const [saved, setSaved] = useState(false)
   return (
     <article className="mentor-card">
       <div className="mentor-card-top">
         <div className="mentor-photo-wrap">
           <img
             className="mentor-photo"
-            src={mentor.image}
+            src={mentor.profile_photo_url || mentor.image}
             alt={`${mentor.name}, ${mentor.role} mentor`}
           />
           <span
             className={`online-dot ${mentor.available ? "is-online" : ""}`}
           />
         </div>
+
         <button
-          className={`icon-button save ${saved ? "saved" : ""}`}
-          onClick={() => setSaved(!saved)}
-          aria-label={`Save ${mentor.name}`}
+          className={`icon-button save ${isSaved ? "saved" : ""}`}
+          onClick={onToggleWishlist}
+          aria-label={`${isSaved ? "Remove" : "Save"} ${mentor.name}`}
         >
           <Icon name="heart" size={19} />
         </button>
       </div>
+
       <div className="mentor-details">
         <div className="mentor-title-row">
           <h3>{mentor.name}</h3>
@@ -576,8 +629,10 @@ function MentorCard({
             <Icon name="star" size={14} /> {mentor.rating}
           </span>
         </div>
+
         <p className="role">{mentor.role}</p>
         {showSchool && <p className="school">{mentor.school}</p>}
+
         <div className="tag-row">
           {mentor.skills.map((skill) => (
             <span className="tag" key={skill}>
@@ -585,19 +640,26 @@ function MentorCard({
             </span>
           ))}
         </div>
+
         <div className="mentor-footer">
           <span>
             <strong>{mentor.sessions}</strong> sessions
           </span>
-          <button className="text-link" onClick={onBook}>
-            View profile <Icon name="arrow" size={15} />
-          </button>
+
+          <div className="mentor-card-actions">
+            <button className="text-link" onClick={onViewProfile}>
+              View profile <Icon name="arrow" size={15} />
+            </button>
+
+            <button className="book-session-btn" onClick={onBook}>
+              Book Session
+            </button>
+          </div>
         </div>
       </div>
     </article>
   )
 }
-
 function PublicHome({ go }: { go: (page: Page) => void }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   return (
@@ -757,6 +819,8 @@ function PublicHome({ go }: { go: (page: Page) => void }) {
 const navItems: { page: Page; label: string; icon: IconName }[] = [
   { page: "dashboard", label: "Overview", icon: "home" },
   { page: "mentors", label: "Find mentors", icon: "search" },
+  { page: "my-bookings", label: "My Bookings", icon: "calendar" },
+  { page: "wishlist", label: "My Wishlist", icon: "heart" },
   { page: "schedule", label: "My schedule", icon: "calendar" },
   { page: "groups", label: "Study groups", icon: "group" },
   { page: "resources", label: "Resources", icon: "book" },
@@ -771,13 +835,29 @@ const mentorNavItems: { page: Page; label: string; icon: IconName }[] = [
   { page: "mentor-profile", label: "Mentor profile", icon: "spark" },
 ]
 
+const getFirstName = (user?: User | null) =>
+  (
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split("@")[0] ||
+    "there"
+  ).split(" ")[0]
+
+const getDisplayName = (user?: User | null) =>
+  user?.user_metadata?.full_name ||
+  user?.user_metadata?.name ||
+  user?.email?.split("@")[0] ||
+  "there"
+
 function AppShell({
   page,
   go,
+  user,
   children,
 }: {
   page: Page
   go: (page: Page) => void
+  user: User | null
   children: React.ReactNode
 }) {
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -855,9 +935,9 @@ function AppShell({
             className="profile-mini"
             onClick={() => go(isMentor ? "mentor-dashboard" : "dashboard")}
           >
-            <Avatar src={mentorImages[5]} name="Alex Morgan" small />
+            <Avatar src={mentorImages[5]} name={getDisplayName(user)} small />
             <span>
-              <strong>Alex Morgan</strong>
+              <strong>{getDisplayName(user)}</strong>
               <small>{isMentor ? "CS Mentor" : "Student"}</small>
             </span>
             <Icon name="chevron" />
@@ -887,7 +967,7 @@ function AppShell({
               onClick={() => go(isMentor ? "mentor-dashboard" : "dashboard")}
               aria-label="Go to overview"
             >
-              <Avatar src={mentorImages[5]} name="Alex Morgan" small />
+              <Avatar src={mentorImages[5]} name={getDisplayName(user)} small />
             </button>
           </div>
         </header>
@@ -979,13 +1059,13 @@ function AppShell({
   )
 }
 
-function Dashboard({ go }: { go: (page: Page) => void }) {
+function Dashboard({ go, user }: { go: (page: Page) => void; user: User | null }) {
   return (
     <>
       <div className="page-title">
         <div>
           <span className="kicker">TUESDAY, MAY 20</span>
-          <h1>Good morning, Alex</h1>
+          <h1>Good morning, {getFirstName(user)}</h1>
           <p>Ready to make progress today?</p>
         </div>
         <Button onClick={() => go("mentors")} icon="plus">
@@ -1174,21 +1254,212 @@ function Dashboard({ go }: { go: (page: Page) => void }) {
   )
 }
 
+
 function Mentors() {
   const [query, setQuery] = useState("")
   const [subject, setSubject] = useState("All subjects")
+  const [sort, setSort] = useState("recommended")
+  const [apiMentors, setApiMentors] = useState<ApiMentor[]>([])
+  const [wishlistIds, setWishlistIds] = useState<number[]>([])
+  const [subjects, setSubjects] = useState<
+  { subject_id: number; subject_name: string }[]
+>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+ 
+  const [selectedMentor, setSelectedMentor] = useState<ApiMentor | null>(null)
+  const [bookingMentor, setBookingMentor] = useState<ApiMentor | null>(null)
+  const [bookingService, setBookingService] = useState("")
+const [bookingDate, setBookingDate] = useState("")
+const [bookingTime, setBookingTime] = useState("")
+const [bookingMessage, setBookingMessage] = useState("")
+const [showFilters, setShowFilters] = useState(false)
+const [minRating, setMinRating] = useState("0")
+const [minSessions, setMinSessions] = useState("0")
+useEffect(() => {
+  async function loadSubjects() {
+    try {
+      const response = await fetch("http://localhost:5000/api/subjects");
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error("Could not load subjects");
+      }
+
+      setSubjects(result.subjects);
+    } catch (err) {
+      console.error("Error loading subjects:", err);
+    }
+  }
+
+  loadSubjects();
+}, []);
+async function loadWishlist() {
+  try {
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.getSession()
+
+    if (sessionError) throw sessionError
+
+    const token = sessionData.session?.access_token
+
+    if (!token) return
+
+    const response = await fetch("http://localhost:5000/api/wishlist", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.message || "Could not load wishlist")
+    }
+
+    const savedList = result.wishlist || result.mentors || []
+    setWishlistIds(
+      savedList.map((mentor: ApiMentor) => mentor.mentor_id)
+    )
+  } catch (error) {
+    console.error("Wishlist loading error:", error)
+  }
+}
+async function toggleWishlist(mentorId: number) {
+  try {
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.getSession()
+
+    if (sessionError) throw sessionError
+
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      alert("Please log in to save mentors.")
+      return
+    }
+
+    const isSaved = wishlistIds.includes(mentorId)
+
+    const response = await fetch(
+      isSaved
+        ? `http://localhost:5000/api/wishlist/${mentorId}`
+        : "http://localhost:5000/api/wishlist",
+      {
+        method: isSaved ? "DELETE" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        ...(isSaved ? {} : {
+          body: JSON.stringify({ mentor_id: mentorId }),
+        }),
+      }
+    )
+
+    const result = await response.json()
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || "Could not update wishlist")
+    }
+
+    setWishlistIds((previous) =>
+      isSaved
+        ? previous.filter((id) => id !== mentorId)
+        : [...previous, mentorId]
+    )
+  } catch (error) {
+    console.error("Wishlist update error:", error)
+    alert("Could not update wishlist. Please try again.")
+  }
+}
+useEffect(() => {
+  loadWishlist()
+}, [])
+useEffect(() => {
+  async function loadMentors() {
+    try {
+      setLoading(true)
+      setError("")
+
+      const params = new URLSearchParams()
+
+      if (query.trim()) {
+        params.append("q", query.trim())
+      }
+
+      if (subject !== "All subjects") {
+        params.append("subject_id", subject)
+      }
+
+      params.append("sort", sort)
+
+      const response = await fetch(
+        `http://localhost:5000/api/mentors?${params.toString()}`
+      )
+
+      const result = await response.json()
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "Could not load mentors")
+      }
+
+      setApiMentors(result.mentors)
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while loading mentors",
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  loadMentors()
+}, [query, subject, sort])
+
   const filtered = useMemo(
     () =>
-      mentors.filter(
-        (m) =>
-          `${m.name} ${m.role} ${m.skills.join(" ")}`
-            .toLowerCase()
-            .includes(query.toLowerCase()) &&
-          (subject === "All subjects" || m.role.includes(subject)),
-      ),
-    [query, subject],
+      apiMentors.filter((mentor) => {
+        const searchableText = [
+          mentor.first_name,
+          mentor.last_name,
+          mentor.mentor_bio ?? "",
+          mentor.student_bio ?? "",
+          ...mentor.services.flatMap((service) => [
+            service.service_type,
+            service.description ?? "",
+          ]),
+        ]
+          .join(" ")
+          .toLowerCase()
+
+        const matchesQuery = searchableText.includes(query.toLowerCase())
+
+        const matchesSubject =
+  subject === "All subjects" ||
+  mentor.services.some(
+    (service) => String(service.subject_id) === subject,
   )
-  const [booking, setBooking] = useState<string | null>(null)
+
+        const matchesRating =
+  (mentor.average_rating ?? 0) >= Number(minRating)
+
+const matchesSessions =
+  mentor.total_sessions >= Number(minSessions)
+
+return (
+  matchesQuery &&
+  matchesSubject &&
+  matchesRating &&
+  matchesSessions
+)
+      }),
+      [apiMentors, query, subject, minRating, minSessions],
+  )
+
+  // TEMPORARY DEBUGGING
   return (
     <>
       <div className="page-title">
@@ -1198,6 +1469,7 @@ function Mentors() {
           <p>Discover students ready to share what they know.</p>
         </div>
       </div>
+
       <div className="filter-bar">
         <div className="large-search">
           <Icon name="search" />
@@ -1207,68 +1479,362 @@ function Mentors() {
             placeholder="Search by skill, course, or mentor..."
           />
         </div>
-        <select value={subject} onChange={(e) => setSubject(e.target.value)}>
-          <option>All subjects</option>
-          <option>Computer Science</option>
-          <option>Product Design</option>
-          <option>Data Science</option>
-          <option>Software Engineering</option>
-        </select>
-        <Button kind="secondary" icon="filter">
-          Filters
-        </Button>
+
+       <select
+  value={subject}
+  onChange={(e) => setSubject(e.target.value)}
+>
+  <option value="All subjects">All subjects</option>
+
+  {subjects.map((item) => (
+  <option key={item.subject_id} value={String(item.subject_id)}>
+    {item.subject_name}
+  </option>
+))}
+</select>
+
+        <Button
+  kind="secondary"
+  icon="filter"
+  onClick={() => setShowFilters(true)}
+>
+  Filters
+</Button>
       </div>
+
       <div className="results-heading">
         <p>
           <strong>{filtered.length} mentors</strong> match your interests
         </p>
-        <select>
-          <option>Recommended</option>
-          <option>Top rated</option>
-          <option>Most sessions</option>
-        </select>
+       <select
+  value={sort}
+  onChange={(e) => setSort(e.target.value)}
+>
+  <option value="recommended">Recommended</option>
+  <option value="top_rated">Top Rated</option>
+  <option value="most_sessions">Most Sessions</option>
+</select>
       </div>
+
+      {loading && <p>Loading mentors from Cognitrade...</p>}
+
+      {error && (
+        <div>
+          <p>Could not load mentors: {error}</p>
+          <Button kind="secondary" onClick={() => window.location.reload()}>
+            Try again
+          </Button>
+        </div>
+      )}
+
+      {!loading && !error && filtered.length === 0 && (
+        <p>No mentors match your search yet.</p>
+      )}
+
       <div className="mentor-grid app-mentor-grid">
-        {filtered.map((m) => (
-          <MentorCard
-            mentor={m}
-            key={m.name}
-            onBook={() => setBooking(m.name)}
-          />
-        ))}
+  {filtered.map((mentor, index) => {
+  const cardMentor = {
+    ...mentors[0],
+    name: `${mentor.first_name} ${mentor.last_name}`,
+    role: mentor.services[0]?.service_type ?? "Student Mentor",
+    school: "Cognitrade",
+    skills: mentor.services.map((service) => service.service_type),
+    image:
+      mentor.profile_photo_url ||
+      mentorImages[index % mentorImages.length],
+    profile_photo_url: mentor.profile_photo_url,
+    rating:
+  mentor.average_rating !== null
+    ? mentor.average_rating.toFixed(1)
+    : "New",
+    sessions: mentor.total_sessions,
+  }
+
+  return (
+  <MentorCard
+  key={mentor.mentor_id}
+  mentor={cardMentor}
+  onViewProfile={() => setSelectedMentor(mentor)}
+  onBook={() => setBookingMentor(mentor)}
+  isSaved={wishlistIds.includes(mentor.mentor_id)}
+  onToggleWishlist={() => toggleWishlist(mentor.mentor_id)}
+/>
+  )
+})}
       </div>
-      {booking && (
+
+      {selectedMentor && (
         <div className="modal-wrap">
           <button
             className="modal-backdrop"
-            onClick={() => setBooking(null)}
-            aria-label="Close modal"
+            onClick={() => setSelectedMentor(null)}
+            aria-label="Close profile"
           />
+
           <div className="modal">
-            <button className="modal-close" onClick={() => setBooking(null)}>
+            <button
+              className="modal-close"
+              onClick={() => setSelectedMentor(null)}
+              aria-label="Close profile"
+            >
               <Icon name="close" />
             </button>
+
             <span className="modal-icon">
               <Icon name="calendar" />
             </span>
-            <h2>Meet {booking}</h2>
+
+            <h2>
+              {selectedMentor.first_name} {selectedMentor.last_name}
+            </h2>
+
             <p>
-              Choose a session to get started. Your mentor will receive your
-              learning goals before you meet.
+              {selectedMentor.mentor_bio ||
+                selectedMentor.student_bio ||
+                "This mentor hasn't added a bio yet."}
             </p>
-            <div className="slot-grid">
-              {["Today · 4:30 PM", "Wed · 10:00 AM", "Thu · 2:00 PM"].map(
-                (x) => (
-                  <button key={x}>{x}</button>
-                ),
+
+            {selectedMentor.student_bio &&
+              selectedMentor.mentor_bio &&
+              selectedMentor.student_bio !== selectedMentor.mentor_bio && (
+                <p>{selectedMentor.student_bio}</p>
               )}
-            </div>
-            <Button className="full-button" onClick={() => setBooking(null)}>
-              Continue to booking
+
+            <h3>Services offered</h3>
+
+            {selectedMentor.services.length > 0 ? (
+              <div className="slot-grid">
+                {selectedMentor.services.map((service) => (
+                  <div key={service.service_id}>
+                    <strong>{service.service_type}</strong>
+                    <p>{service.description || "No description available."}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p>This mentor hasn't listed any services yet.</p>
+            )}
+
+            <Button
+              className="full-button"
+              onClick={() => {
+                setSelectedMentor(null)
+              }}
+            >
+              Close profile
             </Button>
           </div>
         </div>
       )}
+      {showFilters && (
+  <div
+  className="filter-overlay"
+  onClick={() => setShowFilters(false)}
+>
+    <div
+  className="filter-sidebar"
+  onClick={(e) => e.stopPropagation()}
+>
+      <div className="filter-header">
+        <h2>Filters</h2>
+        <button onClick={() => setShowFilters(false)}>
+          ✕
+        </button>
+      </div>
+
+      <div className="filter-group">
+        <h3>Minimum Rating</h3>
+
+        <select
+          value={minRating}
+          onChange={(e) => setMinRating(e.target.value)}
+        >
+          <option value="0">Any rating</option>
+          <option value="3">3.0+ stars</option>
+          <option value="4">4.0+ stars</option>
+          <option value="4.5">4.5+ stars</option>
+        </select>
+      </div>
+
+      <div className="filter-group">
+        <h3>Completed Sessions</h3>
+
+        <select
+          value={minSessions}
+          onChange={(e) => setMinSessions(e.target.value)}
+        >
+          <option value="0">Any number</option>
+          <option value="1">1+ sessions</option>
+          <option value="5">5+ sessions</option>
+          <option value="10">10+ sessions</option>
+        </select>
+      </div>
+
+      <div className="filter-actions">
+        <button
+          onClick={() => {
+            setMinRating("0")
+            setMinSessions("0")
+          }}
+        >
+          Clear All
+        </button>
+
+        <button onClick={() => setShowFilters(false)}>
+          Apply Filters
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+{bookingMentor && (
+  <div className="booking-overlay">
+    <div
+      className="booking-modal"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="booking-header">
+        <h2>Book a Session</h2>
+
+        <button onClick={() => setBookingMentor(null)}>
+          ✕
+        </button>
+      </div>
+
+      <p>
+        Booking a session with{" "}
+        <strong>
+          {bookingMentor.first_name} {bookingMentor.last_name}
+        </strong>
+      </p>
+
+      <div className="booking-field">
+        <label>Select Service</label>
+
+        <select
+          value={bookingService}
+          onChange={(e) => setBookingService(e.target.value)}
+        >
+          <option value="">Choose a service</option>
+
+          {bookingMentor.services.map((service) => (
+            <option
+              key={service.service_id}
+              value={String(service.service_id)}
+            >
+              {service.service_type}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="booking-field">
+        <label>Select Date</label>
+
+        <input
+          type="date"
+          value={bookingDate}
+          min={new Date().toISOString().split("T")[0]}
+          onChange={(e) => setBookingDate(e.target.value)}
+        />
+      </div>
+
+      <div className="booking-field">
+        <label>Select Time</label>
+
+        <input
+          type="time"
+          value={bookingTime}
+          onChange={(e) => setBookingTime(e.target.value)}
+        />
+      </div>
+
+      <div className="booking-field">
+        <label>Message to Mentor (Optional)</label>
+
+        <textarea
+          placeholder="Tell the mentor what you want to learn..."
+          value={bookingMessage}
+          onChange={(e) => setBookingMessage(e.target.value)}
+        />
+      </div>
+
+      <button
+  className="confirm-booking-btn"
+  onClick={async () => {
+  if (!bookingService || !bookingDate || !bookingTime) {
+    alert("Please select a service, date and time.");
+    return;
+  }
+
+  const selectedDateTime = new Date(
+    `${bookingDate}T${bookingTime}`
+  );
+
+  if (selectedDateTime <= new Date()) {
+    alert("Please select a future date and time.");
+    return;
+  }
+
+  try {
+    // Get the Supabase login token
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.getSession();
+
+    if (sessionError) throw sessionError;
+
+    const token = sessionData.session?.access_token;
+
+    if (!token) {
+      alert("Please log in before requesting a booking.");
+      return;
+    }
+
+    // Send booking details to backend
+    const response = await fetch("http://localhost:5000/api/bookings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        mentor_id: bookingMentor.mentor_id,
+        service_id: Number(bookingService),
+        scheduled_time: selectedDateTime.toISOString(),
+        message: bookingMessage,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.message || "Booking request failed.");
+    }
+
+    alert("Booking request sent successfully!");
+
+    setBookingMentor(null);
+    setBookingService("");
+    setBookingDate("");
+    setBookingTime("");
+    setBookingMessage("");
+
+  } catch (error) {
+    console.error("Booking error:", error);
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Something went wrong."
+    );
+  }
+}}
+>
+  Request Booking
+</button>
+    </div>
+  </div>
+)}
     </>
   )
 }
@@ -2201,7 +2767,31 @@ function MentorResources() {
   )
 }
 
-function MentorProfile() {
+function MentorProfile({ user }: { user: User | null }) {
+  const [profilePhoto, setProfilePhoto] = useState(mentorImages[5])
+  const displayName = getDisplayName(user)
+
+  const handlePhotoChange = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0]
+
+    if (!file) return
+
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      alert("Please select a JPG, PNG, or WEBP image.")
+      return
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      alert("Image size must be less than 2 MB.")
+      return
+    }
+
+    const imageUrl = URL.createObjectURL(file)
+    setProfilePhoto(imageUrl)
+  }
+
   return (
     <>
       <div className="page-title">
@@ -2215,17 +2805,35 @@ function MentorProfile() {
       <div className="profile-layout">
         <section className="profile-form-card">
           <div className="profile-photo-row">
-            <Avatar src={mentorImages[5]} name="Alex Morgan" />
-            <div>
-              <strong>Profile photo</strong>
-              <p>A friendly, clear photo helps students feel comfortable.</p>
-            </div>
-            <Button kind="secondary">Change photo</Button>
-          </div>
+  <Avatar src={profilePhoto} name={displayName} />
+
+  <div>
+    <strong>Profile photo</strong>
+    <p>A friendly, clear photo helps students feel comfortable.</p>
+  </div>
+
+  <input
+    type="file"
+    id="profile-photo-input"
+    accept="image/jpeg,image/png,image/webp"
+    hidden
+    onChange={handlePhotoChange}
+  />
+
+  <Button
+    kind="secondary"
+    onClick={() =>
+      document.getElementById("profile-photo-input")?.click()
+    }
+  >
+    Change photo
+  </Button>
+</div>
+        
           <div className="profile-form-grid">
             <label>
               Display name
-              <input defaultValue="Alex Morgan" />
+              <input defaultValue={displayName === "there" ? "" : displayName} />
             </label>
             <label>
               Headline
@@ -2272,8 +2880,8 @@ function MentorProfile() {
           <MentorCard
             mentor={{
               ...mentors[0],
-              name: "Alex Morgan",
-              image: mentorImages[5],
+              name: displayName,
+             image: profilePhoto,
               role: "Computer Science Mentor",
               school: "University of Michigan",
               sessions: 42,
@@ -2301,43 +2909,87 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      setAuthLoading(false)
-    })
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-      setAuthLoading(false)
-    })
+useEffect(() => {
+  let mounted = true;
 
-    return () => subscription.unsubscribe()
-  }, [])
+  // Listen for login, logout and session changes
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange((event, session) => {
+    if (!mounted) return;
+
+    console.log("Auth event:", event);
+    console.log("User:", session?.user?.email ?? "No user");
+
+    setUser(session?.user ?? null);
+
+    if (session) {
+      setPage("dashboard");
+    } else if (event === "SIGNED_OUT") {
+      setPage("home");
+    }
+
+    setAuthLoading(false);
+  });
+
+  // Restore an existing login session
+  supabase.auth.getSession().then(({ data, error }) => {
+    if (!mounted) return;
+
+    if (error) {
+      console.error("Session restoration error:", error);
+    }
+
+    const session = data.session;
+
+    console.log("Restored session:", session?.user?.email ?? "No session");
+
+    setUser(session?.user ?? null);
+
+    if (session) {
+      setPage("dashboard");
+    }
+
+    setAuthLoading(false);
+  });
+
+  return () => {
+    mounted = false;
+    subscription.unsubscribe();
+  };
+}, []);
+
 
   const go = (next: Page) => {
     setPage(next)
     window.scrollTo(0, 0)
   }
-
-  if (authLoading) {
+    if (authLoading) {
     return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", fontFamily: "sans-serif" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          minHeight: "100vh",
+          fontFamily: "sans-serif",
+        }}
+      >
         Loading...
       </div>
     )
   }
-
   if (page === "home") return <PublicHome go={go} />
   if (page === "login") return <LoginPage go={go} />
   if (page === "signup") return <SignupPage go={go} />
   if (page === "logout") return <LogoutPage go={go} user={user} />
   return (
-    <AppShell page={page} go={go}>
-      {page === "dashboard" && <Dashboard go={go} />}
+    <AppShell page={page} go={go} user={user}>
+      {page === "dashboard" && <Dashboard go={go} user={user} />}
       {page === "mentors" && <Mentors />}
+      {page === "my-bookings" && <MyBookings />}
+      {page === "wishlist" && <MyWishlist />}
       {page === "groups" && <Groups />}
       {page === "resources" && <Resources />}
       {page === "schedule" && <Schedule />}
@@ -2346,7 +2998,654 @@ export default function App() {
       {page === "mentor-students" && <MentorStudents />}
       {page === "mentor-availability" && <MentorAvailability />}
       {page === "mentor-resources" && <MentorResources />}
-      {page === "mentor-profile" && <MentorProfile />}
+      {page === "mentor-profile" && <MentorProfile user={user} />}
     </AppShell>
+  )
+}
+
+function MyWishlist() {
+  const [wishlist, setWishlist] = useState<ApiMentor[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [selectedMentor, setSelectedMentor] = useState<ApiMentor | null>(null)
+const [bookingMentor, setBookingMentor] = useState<ApiMentor | null>(null)
+
+const [bookingService, setBookingService] = useState("")
+const [bookingDate, setBookingDate] = useState("")
+const [bookingTime, setBookingTime] = useState("")
+const [bookingMessage, setBookingMessage] = useState("")
+
+  useEffect(() => {
+    const fetchWishlist = async () => {
+      try {
+        setLoading(true)
+        setError("")
+
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession()
+
+        if (sessionError) throw sessionError
+
+        const token = sessionData.session?.access_token
+
+        if (!token) {
+          setError("Please log in to view your wishlist.")
+          return
+        }
+
+        const response = await fetch(
+          "http://localhost:5000/api/wishlist",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        )
+
+        const result = await response.json()
+
+        if (!response.ok) {
+          throw new Error(result.message || "Could not load wishlist.")
+        }
+
+        setWishlist(result.wishlist || result.mentors || [])
+      } catch (err) {
+        console.error("Wishlist error:", err)
+        setError(
+          err instanceof Error ? err.message : "Something went wrong."
+        )
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchWishlist()
+  }, [])
+
+  const removeFromWishlist = async (mentorId: number) => {
+    try {
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession()
+
+      if (sessionError) throw sessionError
+
+      const token = sessionData.session?.access_token
+
+      if (!token) {
+        setError("Please log in to update your wishlist.")
+        return
+      }
+
+      const response = await fetch(
+        `http://localhost:5000/api/wishlist/${mentorId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      )
+
+      const result = await response.json()
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "Could not remove mentor.")
+      }
+
+      setWishlist((previous) =>
+        previous.filter((mentor) => mentor.mentor_id !== mentorId)
+      )
+    } catch (err) {
+      console.error("Remove wishlist error:", err)
+      setError(
+        err instanceof Error ? err.message : "Could not update wishlist."
+      )
+    }
+  }
+
+  return (
+    <div className="my-bookings-page">
+      <div className="bookings-heading">
+        <div>
+          <h1>My Wishlist</h1>
+          <p>Your favourite mentors, saved in one place.</p>
+        </div>
+      </div>
+
+      <div className="booking-list">
+        <h2>Saved Mentors ({wishlist.length})</h2>
+
+        {loading && <p>Loading your wishlist...</p>}
+
+        {!loading && error && (
+          <p className="booking-error">{error}</p>
+        )}
+
+        {!loading && !error && wishlist.length === 0 && (
+          <p>You haven't saved any mentors yet. Explore mentors and tap the heart to save one!</p>
+        )}
+
+        {!loading && !error && wishlist.length > 0 && (
+          <div className="mentor-grid">
+            {wishlist.map((mentor, index) => {
+              const cardMentor = {
+                ...mentors[0],
+                name: `${mentor.first_name} ${mentor.last_name}`,
+                role: mentor.services[0]?.service_type ?? "Student Mentor",
+                school: "Cognitrade",
+                skills: mentor.services.map(
+                  (service) => service.service_type
+                ),
+                image:
+                  mentor.profile_photo_url ||
+                  mentorImages[index % mentorImages.length],
+                profile_photo_url: mentor.profile_photo_url,
+                rating:
+                  mentor.average_rating !== null
+                    ? mentor.average_rating.toFixed(1)
+                    : "New",
+                sessions: mentor.total_sessions,
+              }
+
+              return (
+               <MentorCard
+  key={mentor.mentor_id}
+  mentor={cardMentor}
+  isSaved={true}
+  onToggleWishlist={() =>
+    removeFromWishlist(mentor.mentor_id)
+  }
+  onViewProfile={() => setSelectedMentor(mentor)}
+  onBook={() => {
+    setBookingMentor(mentor)
+    setBookingService("")
+    setBookingDate("")
+    setBookingTime("")
+    setBookingMessage("")
+  }}
+  showSchool={false}
+/>
+              )
+            })}
+          </div>
+        )}
+      </div>
+      
+      {selectedMentor && (
+        <div className="modal-wrap">
+          <button
+            className="modal-backdrop"
+            onClick={() => setSelectedMentor(null)}
+            aria-label="Close profile"
+          />
+
+          <div className="modal">
+            <button
+              className="modal-close"
+              onClick={() => setSelectedMentor(null)}
+              aria-label="Close profile"
+            >
+              <Icon name="close" />
+            </button>
+
+            <span className="modal-icon">
+              <Icon name="calendar" />
+            </span>
+
+            <h2>
+              {selectedMentor.first_name} {selectedMentor.last_name}
+            </h2>
+
+            <p>
+              {selectedMentor.mentor_bio ||
+                selectedMentor.student_bio ||
+                "This mentor hasn't added a bio yet."}
+            </p>
+
+            {selectedMentor.student_bio &&
+              selectedMentor.mentor_bio &&
+              selectedMentor.student_bio !== selectedMentor.mentor_bio && (
+                <p>{selectedMentor.student_bio}</p>
+              )}
+
+            <h3>Services offered</h3>
+
+            {selectedMentor.services.length > 0 ? (
+              <div className="slot-grid">
+                {selectedMentor.services.map((service) => (
+                  <div key={service.service_id}>
+                    <strong>{service.service_type}</strong>
+                    <p>
+                      {service.description || "No description available."}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p>This mentor hasn't listed any services yet.</p>
+            )}
+
+            <Button
+              className="full-button"
+              onClick={() => setSelectedMentor(null)}
+            >
+              Close profile
+            </Button>
+          </div>
+        </div>
+      )}
+      
+      {bookingMentor && (
+        <div className="booking-overlay">
+          <div
+            className="booking-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="booking-header">
+              <h2>Book a Session</h2>
+              <button onClick={() => setBookingMentor(null)}>
+                ✕
+              </button>
+            </div>
+
+            <p>
+              Booking a session with{" "}
+              <strong>
+                {bookingMentor.first_name} {bookingMentor.last_name}
+              </strong>
+            </p>
+
+            <div className="booking-field">
+              <label>Select Service</label>
+              <select
+                value={bookingService}
+                onChange={(e) => setBookingService(e.target.value)}
+              >
+                <option value="">Choose a service</option>
+                {bookingMentor.services.map((service) => (
+                  <option
+                    key={service.service_id}
+                    value={String(service.service_id)}
+                  >
+                    {service.service_type}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="booking-field">
+              <label>Select Date</label>
+              <input
+                type="date"
+                value={bookingDate}
+                min={new Date().toISOString().split("T")[0]}
+                onChange={(e) => setBookingDate(e.target.value)}
+              />
+            </div>
+
+            <div className="booking-field">
+              <label>Select Time</label>
+              <input
+                type="time"
+                value={bookingTime}
+                onChange={(e) => setBookingTime(e.target.value)}
+              />
+            </div>
+
+            <div className="booking-field">
+              <label>Message to Mentor (Optional)</label>
+              <textarea
+                placeholder="Tell the mentor what you want to learn..."
+                value={bookingMessage}
+                onChange={(e) => setBookingMessage(e.target.value)}
+              />
+            </div>
+
+            <button
+              className="confirm-booking-btn"
+              onClick={async () => {
+                if (!bookingService || !bookingDate || !bookingTime) {
+                  alert("Please select a service, date and time.")
+                  return
+                }
+
+                const selectedDateTime = new Date(
+                  `${bookingDate}T${bookingTime}`
+                )
+
+                if (selectedDateTime <= new Date()) {
+                  alert("Please select a future date and time.")
+                  return
+                }
+
+                try {
+                  const { data: sessionData, error: sessionError } =
+                    await supabase.auth.getSession()
+
+                  if (sessionError) throw sessionError
+
+                  const token = sessionData.session?.access_token
+
+                  if (!token) {
+                    alert("Please log in before requesting a booking.")
+                    return
+                  }
+
+                  const response = await fetch(
+                    "http://localhost:5000/api/bookings",
+                    {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${token}`,
+                      },
+                      body: JSON.stringify({
+                        mentor_id: bookingMentor.mentor_id,
+                        service_id: Number(bookingService),
+                        scheduled_time: selectedDateTime.toISOString(),
+                        message: bookingMessage,
+                      }),
+                    }
+                  )
+
+                  const result = await response.json()
+
+                  if (!response.ok) {
+                    throw new Error(
+                      result.message || "Booking request failed."
+                    )
+                  }
+
+                  alert("Booking request sent successfully!")
+
+                  setBookingMentor(null)
+                  setBookingService("")
+                  setBookingDate("")
+                  setBookingTime("")
+                  setBookingMessage("")
+                } catch (error) {
+                  console.error("Booking error:", error)
+                  alert(
+                    error instanceof Error
+                      ? error.message
+                      : "Something went wrong."
+                  )
+                }
+              }}
+            >
+              Request Booking
+            </button>
+          </div>
+        </div>
+      )}
+
+    </div>
+  )
+}
+
+
+function MyBookings() {
+const [selectedBooking, setSelectedBooking] = useState<any | null>(null)
+ const [bookings, setBookings] = useState<any[]>([])
+const [loading, setLoading] = useState(true)
+const [error, setError] = useState("")
+useEffect(() => {
+  const fetchBookings = async () => {
+    try {
+      setLoading(true)
+      setError("")
+
+      // Get the current Supabase login session
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession()
+
+      if (sessionError) {
+        throw sessionError
+      }
+
+      const token = sessionData.session?.access_token
+
+      if (!token) {
+        setError("Please log in to view your bookings.")
+        return
+      }
+
+      // Fetch bookings from the backend
+      const response = await fetch("http://localhost:5000/api/bookings", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || "Could not fetch bookings.")
+      }
+
+      // Convert backend data into the format used by your UI
+      const formattedBookings = (result.bookings || []).map((booking: any) => {
+        const scheduledDate = new Date(booking.scheduled_time)
+
+        return {
+          id: booking.session_id,
+          mentor: booking.mentor_name,
+          service: booking.service_name,
+          date: scheduledDate.toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          }),
+          time: scheduledDate.toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+          status: booking.session_status,
+        }
+      })
+
+      setBookings(formattedBookings)
+    } catch (err) {
+      console.error("Fetch bookings error:", err)
+      setError(
+        err instanceof Error ? err.message : "Something went wrong."
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  fetchBookings()
+}, [])
+ const cancelBooking = async (bookingId: number) => {
+  try {
+    setError("")
+
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      setError("Please log in to cancel this booking.")
+      return
+    }
+
+    const response = await fetch(
+      `http://localhost:5000/api/bookings/${bookingId}/cancel`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    )
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.message || "Could not cancel booking.")
+    }
+
+    setBookings((previousBookings) =>
+      previousBookings.map((booking) =>
+        booking.id === bookingId
+          ? { ...booking, status: "cancelled" }
+          : booking
+      )
+    )
+
+    setSelectedBooking(null)
+  } catch (err) {
+    setError(
+      err instanceof Error ? err.message : "Something went wrong."
+    )
+  }
+}
+  return (
+    <div className="my-bookings-page">
+      <div className="bookings-heading">
+        <div>
+          <h1>My Bookings</h1>
+          <p>Track your mentoring sessions and booking requests.</p>
+        </div>
+      </div>
+
+      <div className="booking-stats">
+        <div className="booking-stat">
+          <span>Total Bookings</span>
+          <h2>{bookings.length}</h2>
+        </div>
+        <div className="booking-stat">
+          <span>Pending</span>
+          <h2>{bookings.filter(b => b.status === "pending").length}</h2>
+        </div>
+        <div className="booking-stat">
+          <span>Confirmed</span>
+          <h2>{bookings.filter(b => b.status === "confirmed").length}</h2>
+        </div>
+        <div className="booking-stat">
+          <span>Completed</span>
+          <h2>{bookings.filter(b => b.status === "completed").length}</h2>
+        </div>
+      </div>
+
+      <div className="booking-list">
+        <h2>Your Sessions</h2>
+{loading && <p>Loading your bookings...</p>}
+
+{!loading && error && (
+  <p className="booking-error">{error}</p>
+)}
+
+{!loading && !error && bookings.length === 0 && (
+  <p>You haven't booked any sessions yet.</p>
+)}
+        {bookings.map((booking) => (
+          <div
+            className="booking-card"
+            key={booking.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => setSelectedBooking(booking)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                setSelectedBooking(booking)
+              }
+            }}
+          >
+            <div className="booking-card-info">
+              <div className="booking-avatar">
+                {booking.mentor.charAt(0)}
+              </div>
+
+              <div>
+                <h3>{booking.mentor}</h3>
+                <p>{booking.service}</p>
+                <span>{booking.date} · {booking.time}</span>
+              </div>
+            </div>
+
+            <div className="booking-card-right">
+              <span className={`booking-status ${booking.status}`}>
+                {booking.status}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {selectedBooking && (
+        <div
+          className="booking-overlay"
+          onClick={() => setSelectedBooking(null)}
+        >
+          <div
+            className="booking-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="booking-header">
+              <h2>Booking Details</h2>
+              <button onClick={() => setSelectedBooking(null)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="booking-avatar">
+              {selectedBooking.mentor.charAt(0)}
+            </div>
+
+            <h3>{selectedBooking.mentor}</h3>
+
+            <div className="booking-detail-item">
+              <strong>Service</strong>
+              <p>{selectedBooking.service}</p>
+            </div>
+
+            <div className="booking-detail-item">
+              <strong>Date</strong>
+              <p>{selectedBooking.date}</p>
+            </div>
+
+            <div className="booking-detail-item">
+              <strong>Time</strong>
+              <p>{selectedBooking.time}</p>
+            </div>
+
+            <div className="booking-detail-item">
+              <strong>Booking Status</strong>
+              <span className={`booking-status ${selectedBooking.status}`}>
+                {selectedBooking.status}
+              </span>
+            </div>
+
+            <div className="booking-modal-actions">
+  {selectedBooking.status === "pending" && (
+    <button
+      className="cancel-booking-btn"
+      onClick={() => {
+        const confirmed = window.confirm(
+          "Are you sure you want to cancel this booking?"
+        )
+
+        if (confirmed) {
+  cancelBooking(selectedBooking.id)
+}
+      }}
+    >
+      Cancel Booking
+    </button>
+  )}
+
+  <button
+    className="confirm-booking-btn"
+    onClick={() => setSelectedBooking(null)}
+  >
+    Close
+  </button>
+</div>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
