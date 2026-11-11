@@ -17,7 +17,22 @@ const SUPABASE_KEY =
   process.env.VITE_SUPABASE_ANON_KEY ||
   "sb_publishable_RekbjwNkjt2Q8_PIw9FSUw_bQ-z0y-v";
 
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SECRET_KEY ||
+  "";
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Admin client (bypasses RLS when service_role key is supplied)
+const supabaseAdmin = SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    })
+  : null;
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -85,18 +100,29 @@ async function authenticateRequest(req, res) {
 
   const user = authData.user;
   const userSupabase = getUserSupabase(token);
+  // Prefer admin client if service role key is configured to avoid client RLS policy recursion
+  const dbClient = supabaseAdmin || userSupabase;
 
-  return { user, token, userSupabase };
+  return { user, token, userSupabase, dbClient };
 }
 
 // Helper: Find or auto-provision student record for an authenticated user
-async function getOrCreateStudent(userSupabase, authUser) {
+async function getOrCreateStudent(dbClient, authUser) {
   // 1. Try finding existing student record by auth_user_id
-  const { data: existingStudent, error: findError } = await userSupabase
+  const { data: existingStudent, error: findError } = await dbClient
     .from("student")
     .select("student_id, auth_user_id, first_name, last_name, email, profile_photo_url")
     .eq("auth_user_id", authUser.id)
     .maybeSingle();
+
+  if (findError) {
+    console.error("Find student error:", findError);
+    if (findError.code === "42P17") {
+      throw new Error(
+        "Database RLS policy error: Infinite recursion on 'student' table. In your Supabase SQL Editor, run: ALTER TABLE student DISABLE ROW LEVEL SECURITY; or add SUPABASE_SERVICE_ROLE_KEY to backend/.env."
+      );
+    }
+  }
 
   if (existingStudent) {
     return existingStudent;
@@ -115,7 +141,7 @@ async function getOrCreateStudent(userSupabase, authUser) {
     authUser.user_metadata?.last_name ||
     (nameParts.length > 1 ? nameParts.slice(1).join(" ") : "");
 
-  const { data: createdStudent, error: insertError } = await userSupabase
+  const { data: createdStudent, error: insertError } = await dbClient
     .from("student")
     .insert({
       auth_user_id: authUser.id,
@@ -124,10 +150,15 @@ async function getOrCreateStudent(userSupabase, authUser) {
       email: authUser.email,
     })
     .select("student_id, auth_user_id, first_name, last_name, email, profile_photo_url")
-    .single();
+    .maybeSingle();
 
   if (insertError) {
     console.error("Auto-provision student error:", insertError.message);
+    if (insertError.code === "42P17") {
+      throw new Error(
+        "Database RLS policy error: Infinite recursion on 'student' table. In your Supabase SQL Editor, run: ALTER TABLE student DISABLE ROW LEVEL SECURITY; or add SUPABASE_SERVICE_ROLE_KEY to backend/.env."
+      );
+    }
     return null;
   }
 
@@ -415,9 +446,9 @@ app.post(
     try {
       const authResult = await authenticateRequest(req, res);
       if (!authResult) return;
-      const { user, userSupabase } = authResult;
+      const { user, userSupabase, dbClient } = authResult;
 
-      const student = await getOrCreateStudent(userSupabase, user);
+      const student = await getOrCreateStudent(dbClient, user);
       if (!student) {
         return res.status(404).json({
           success: false,
@@ -498,9 +529,18 @@ app.get("/api/bookings", async (req, res) => {
   try {
     const authResult = await authenticateRequest(req, res);
     if (!authResult) return;
-    const { user, userSupabase } = authResult;
+    const { user, userSupabase, dbClient } = authResult;
 
-    const student = await getOrCreateStudent(userSupabase, user);
+    let student;
+    try {
+      student = await getOrCreateStudent(dbClient, user);
+    } catch (studentErr) {
+      return res.status(500).json({
+        success: false,
+        message: studentErr.message,
+      });
+    }
+
     if (!student) {
       return res.status(404).json({
         success: false,
@@ -509,7 +549,7 @@ app.get("/api/bookings", async (req, res) => {
     }
 
     // Fetch this student's sessions directly
-    const { data: bookings, error: bookingError } = await userSupabase
+    const { data: bookings, error: bookingError } = await dbClient
       .from("session")
       .select(`
         session_id,
@@ -591,9 +631,18 @@ app.post("/api/bookings", async (req, res) => {
   try {
     const authResult = await authenticateRequest(req, res);
     if (!authResult) return;
-    const { user, userSupabase } = authResult;
+    const { user, userSupabase, dbClient } = authResult;
 
-    const student = await getOrCreateStudent(userSupabase, user);
+    let student;
+    try {
+      student = await getOrCreateStudent(dbClient, user);
+    } catch (studentErr) {
+      return res.status(500).json({
+        success: false,
+        message: studentErr.message,
+      });
+    }
+
     if (!student) {
       return res.status(404).json({
         success: false,
@@ -687,9 +736,18 @@ app.patch("/api/bookings/:id/cancel", async (req, res) => {
   try {
     const authResult = await authenticateRequest(req, res);
     if (!authResult) return;
-    const { user, userSupabase } = authResult;
+    const { user, userSupabase, dbClient } = authResult;
 
-    const student = await getOrCreateStudent(userSupabase, user);
+    let student;
+    try {
+      student = await getOrCreateStudent(dbClient, user);
+    } catch (studentErr) {
+      return res.status(500).json({
+        success: false,
+        message: studentErr.message,
+      });
+    }
+
     if (!student) {
       return res.status(404).json({
         success: false,
@@ -750,9 +808,18 @@ app.patch("/api/bookings/:id/review", async (req, res) => {
   try {
     const authResult = await authenticateRequest(req, res);
     if (!authResult) return;
-    const { user, userSupabase } = authResult;
+    const { user, userSupabase, dbClient } = authResult;
 
-    const student = await getOrCreateStudent(userSupabase, user);
+    let student;
+    try {
+      student = await getOrCreateStudent(dbClient, user);
+    } catch (studentErr) {
+      return res.status(500).json({
+        success: false,
+        message: studentErr.message,
+      });
+    }
+
     if (!student) {
       return res.status(404).json({
         success: false,
@@ -810,9 +877,18 @@ app.get("/api/wishlist", async (req, res) => {
   try {
     const authResult = await authenticateRequest(req, res);
     if (!authResult) return;
-    const { user, userSupabase } = authResult;
+    const { user, userSupabase, dbClient } = authResult;
 
-    const student = await getOrCreateStudent(userSupabase, user);
+    let student;
+    try {
+      student = await getOrCreateStudent(dbClient, user);
+    } catch (studentErr) {
+      return res.status(500).json({
+        success: false,
+        message: studentErr.message,
+      });
+    }
+
     if (!student) {
       return res.status(404).json({
         success: false,
@@ -914,9 +990,18 @@ app.post("/api/wishlist", async (req, res) => {
   try {
     const authResult = await authenticateRequest(req, res);
     if (!authResult) return;
-    const { user, userSupabase } = authResult;
+    const { user, userSupabase, dbClient } = authResult;
 
-    const student = await getOrCreateStudent(userSupabase, user);
+    let student;
+    try {
+      student = await getOrCreateStudent(dbClient, user);
+    } catch (studentErr) {
+      return res.status(500).json({
+        success: false,
+        message: studentErr.message,
+      });
+    }
+
     if (!student) {
       return res.status(404).json({
         success: false,
@@ -933,7 +1018,7 @@ app.post("/api/wishlist", async (req, res) => {
       });
     }
 
-    const { error: insertError } = await userSupabase.from("wishlist").insert({
+    const { error: insertError } = await dbClient.from("wishlist").insert({
       student_id: student.student_id,
       mentor_id: mentorId,
     });
@@ -966,9 +1051,18 @@ app.delete("/api/wishlist/:mentorId", async (req, res) => {
   try {
     const authResult = await authenticateRequest(req, res);
     if (!authResult) return;
-    const { user, userSupabase } = authResult;
+    const { user, userSupabase, dbClient } = authResult;
 
-    const student = await getOrCreateStudent(userSupabase, user);
+    let student;
+    try {
+      student = await getOrCreateStudent(dbClient, user);
+    } catch (studentErr) {
+      return res.status(500).json({
+        success: false,
+        message: studentErr.message,
+      });
+    }
+
     if (!student) {
       return res.status(404).json({
         success: false,
@@ -985,7 +1079,7 @@ app.delete("/api/wishlist/:mentorId", async (req, res) => {
       });
     }
 
-    const { data: deleted, error: deleteError } = await userSupabase
+    const { data: deleted, error: deleteError } = await dbClient
       .from("wishlist")
       .delete()
       .eq("student_id", student.student_id)
